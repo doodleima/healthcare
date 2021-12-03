@@ -57,7 +57,7 @@ def convert_img(FILE_LOC, DEST_LOC, IS_OKAY=True) :
     return total_info
 
 ### API ###
-# example : curl -X POST -F input=/home/phenomx/mason/common/input_sample/case3 http://192.168.0.47:33333/converted
+# example : curl -X POST -F input=[/absolute/file/path] [http://ip.add.ress.num]:[port]/converted
 @app.route('/converted', methods=['POST'])
 def convert_post():
     pwd = os.getcwd()
@@ -71,5 +71,5 @@ def convert_post():
     return f"{(result)}"
 
 if __name__ == "__main__" :
-    # app.run(debug=True, host='192.168.0.47', port=33333) # custom port
-    app.run(debug=True, host='0.0.0.0', port=33333) # custom port
+    # app.run(debug=True, host='[ip.add.ress.num]', port=[port]) # custom port
+    app.run(debug=True, host='0.0.0.0', port=33333) # lclhost
