@@ -1,66 +1,111 @@
-import skimage.transform as skTrans
-import nibabel as nib
 import numpy as np
+import torchio as tio
 
 import torch
+import multiprocessing
 
+from tqdm import tqdm
+from torchio import DATA
+from torch.utils.data import DataLoader
 from model import unetRModel, UNETR_MONAI
+
+import nibabel as nib
+
+# import torchinfo
+# import torch.nn.functional as F
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def test_data(nii_path):
-    nii_raw_affine = nib.load(nii_path)
-    nii_raw = nib.load(nii_path).get_fdata()
-    nii_shape = nii_raw.shape
+def make_refer(nii_path): # for space normalization(resample)
+    nii_ref = tio.ScalarImage(nii_path)
 
-    if nii_raw.shape[0] > nii_raw.shape[2]: nii_raw = np.swapaxes(nii_raw, 0, 2)
+    return nii_ref
 
+def test_data(nii_path, space_ref):
+    SUBJECTS = []
 
-    nii = skTrans.resize(nii_raw, (128,128,128))
-    nii = torch.from_numpy(nii)
+    subject = tio.Subject(
+            SPACE_REF = space_ref,
+            IMG = tio.ScalarImage(nii_path)
+        )
 
-    nii_resized = torch.unsqueeze(nii, dim=0)
+    transform = tio.Compose([tio.ToCanonical(), 
+                                 tio.Resample('SPACE_REF'),
+                                 tio.Resize((128,128,128), image_interpolation='linear'),
+                                #  tio.CropOrPad((128,128,128)),
+                            ])
 
-    return nii_raw_affine, nii_shape, nii_resized
+    subject_transformed = transform(subject)
+    SUBJECTS.append(subject_transformed)
+
+    return SUBJECTS
 
 
 def model_load(model_path):
-    # model = unetRModel()
     model = UNETR_MONAI()
     chkpoint = torch.load(model_path)
 
     return model, chkpoint
 
 
-def eval(target_nii, model):
-    with torch.no_grad():
-        model.eval()
-        # total_cost = 0.0
-    
-        eval_data = target_nii.to(device, dtype=torch.float)
-        output = model(eval_data)
+def eval(dataloader, model):
+    model.eval()
+    with torch.no_grad():    
+        for batch_idx, batch in enumerate(tqdm(dataloader, desc='Torchio TEST')):
+            test_data =batch['IMG'][DATA].to(device, dtype=torch.float)
+            
+            output_test = model(test_data)
 
-        return output
+    return output_test
+
+
+def load_affine(nii_path):
+    nii_aff = nib.load(nii_path)
+
+    return nii_aff.affine
 
 
 if __name__ == "__main__":
-    test_path = '/home/pmx/src/test/T1w_0000.nii.gz'
-    model_path = '/home/pmx/model/trained/unetr_checkpoint.pt'
+    BATCH_SIZE = 4
+    FLAG = 0
 
-    nii_aff, nii_shape, nii= test_data(test_path) # , nii_ext 
+    test_path = 'ABSOLUTE PATH(Nii.gz)'
+    model_path = 'ABSOLUTE PATH(checkpoint.pt)'
 
-    model, chkpoint = model_load(model_path)
+    if FLAG == 0:
+        nii_ref = make_refer(test_path)
+        nii_aff = load_affine(test_path)
+        FLAG = 1
 
-    model.load_state_dict(chkpoint['model_state_dict'])
+    subject = test_data(test_path, nii_ref) # , nii_ext 
+    model, weight = model_load(model_path)
 
-    nii = nii.unsqueeze(0)
+    model.load_state_dict(weight['model_state_dict'])
 
-    nii_result = eval(nii, model)
-    nii_result = nii_result.squeeze() # (C, H W D)
-    nii_result = nii_result.cpu().detach().numpy()
+    # print(torchinfo.summary(model, input_size=(4,1,128,128,128))) # model summary
+    test_dataset = tio.SubjectsDataset(subject)
 
-    nii_edited = skTrans.resize(nii_result, nii_shape)
+    TEST_LOADER = DataLoader(
+        test_dataset,
+        batch_size = BATCH_SIZE,
+        shuffle = True,
+        num_workers=multiprocessing.cpu_count(), # import multiprocessing
+    )
 
-    nii_img = nib.Nifti1Image(nii_edited, affine=nii_aff.affine)
-    nib.save(nii_img, test_path.replace("_0000", "_Unetr"))
+    nii_output = eval(TEST_LOADER, model) # tensor (B, C, 128, 128, 128)
+    
+    # nii_output = F.softmax(nii_output, 1)
+    nii_output = torch.argmax(nii_output, 1)
+    nii_output = nii_output.to(dtype=torch.int8) # type casting
+    nii_output = nii_output.squeeze() # (C, 128, 128 ,128)
+    
+    print(torch.unique(nii_output))
+    print(nii_output.shape)
 
+    nii_output = nii_output.cpu().detach().numpy()
+
+    # # print(np.unique(nii_output))
+    # # print(nii_output.shape)
+
+    nii_img = nib.Nifti1Image(nii_output, affine=np.eye(4)) # or 'affine=nii_aff'
+    nib.save(nii_img, test_path.replace('REMOVE', 'NEW'))

@@ -1,7 +1,5 @@
 import torch
-from models import unet, unetR
-from research_contributions.UNETR.BTCV.networks import unetr
-
+from models import unet, unetR, unetR_monai
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -25,7 +23,7 @@ def unetModel():
 def unetRModel():
     model = unetR.UNetR( 
         img_shape=(128, 128, 128), 
-        input_dim=4, output_dim=3, 
+        input_dim=4, output_dim=3, # input_dim = number of modalities (T1w, Flair..)
         embed_dim=768, 
         patch_size=16, 
         num_heads=12, 
@@ -36,9 +34,9 @@ def unetRModel():
 
 
 def UNETR_MONAI():
-    model = unetr.UNETR(
-        in_channels=1,
-        out_channels=3,
+    model = unetR_monai.UNETR( # unetr
+        in_channels=1, # number of image modalities
+        out_channels=5, # number of classes
         img_size=(128, 128, 128),
         feature_size=16, # patch size
         hidden_size=768,
@@ -46,7 +44,6 @@ def UNETR_MONAI():
         num_heads=12,
         pos_embed="perceptron",
         norm_name="instance",
-        # conv_block=False,
         conv_block=True,
         res_block=True,
         dropout_rate=0.1,
