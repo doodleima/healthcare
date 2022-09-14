@@ -12,7 +12,8 @@ from monai.losses import DiceCELoss
 
 from model import UNETR_MONAI
 from dataloader import nnUNet_CustomDataset, EarlyStopping
-/Users/mason/Documents/git/healthcare/unetr_monai/test.py
+
+
 # import multiprocessing
 # import torch.nn as nn
 # import torch.nn.functional as F
@@ -27,7 +28,9 @@ torch.autograd.set_detect_anomaly(True)
 
 if torch.cuda.is_available() == True: print(f"GPU [{torch.cuda.get_device_name(0)}]: {torch.cuda.device_count()}")
 #########################################################################################################################
-                                                    
+H = 256
+W = 256
+D = 176
 
 # ### save chkpoint weight if some conditions are 'True'
 # def save_chkpoint(epoch_num, model, optimizer, cost, model_path):
@@ -47,12 +50,13 @@ def train(dataloader, model, optimizer, loss_function, epoch):
     train_loss = 0.0
 
     ### train model
-    for batch_idx, batch in enumerate(tqdm(dataloader, desc=f'Torchio TRAIN [{epoch}]')):
-        train_data = batch['IMG'][DATA].to(device, dtype=torch.float)
-        train_label = batch['LABEL'][DATA].to(device)
+    for batch_idx, batch in enumerate(tqdm(dataloader, desc=f'[TorchIO] TRAIN [{epoch}]')):
+        train_data = batch['IMG'][DATA].to(device, dtype=torch.float) 
+        train_label = batch['LABEL'][DATA].to(device, dtype=torch.int8)
 
         optimizer.zero_grad()
-        output_train = model(train_data)
+        output_train = model(train_data).to(dtype=torch.float)
+
         t_loss = loss_function(output_train, train_label)
 
         # backprop
@@ -75,11 +79,12 @@ def eval(dataloader, model, loss_function, epoch):
     ### valid model
     with torch.no_grad():
 
-        for batch_idx, batch in enumerate(tqdm(dataloader, desc=f'Torchio VALID [{epoch}]')):
+        for batch_idx, batch in enumerate(tqdm(dataloader, desc=f'[TorchIO] VALID [{epoch}]')):
             valid_data = batch['IMG'][DATA].to(device, dtype=torch.float)
             valid_label = batch['LABEL'][DATA].to(device, dtype=torch.int8)
             
             output_val = model(valid_data)
+            # valid_label = batch['LABEL'][DATA].to("cpu", dtype=torch.int8)
             v_loss = loss_function(output_val, valid_label)
 
             val_loss += v_loss.item()
@@ -91,18 +96,18 @@ def eval(dataloader, model, loss_function, epoch):
 
 
 if __name__ == "__main__":
-    BASE = 'DATASET PATH' # should be consisted imagesTr / labelsTr and imagesTs
-    MODEL_STORE = 'MODEL STORE PATH(DESTINATION)'
+    BASE = '/home/pmx/src/pytorch/data'
+    MODEL_STORE = '/home/pmx/model/trained' # model store path
 
-    TOTAL_DATASET = 800 # total dataset
-    TRAIN_RATIO = 0.8
-    VALID_RATIO = 0.2
-    BATCH_SIZE = 4
-    EPOCH_SIZE = 100
-    PATIENCE = 5
+    TOTAL_DATASET = 220 #280 # number of dataset for use
+    TRAIN_RATIO = 0.85
+    VALID_RATIO = 0.15
+    BATCH_SIZE = 1
+    EPOCH_SIZE = 200
+    PATIENCE = 20
 
     subject = nnUNet_CustomDataset(BASE, 'train', TOTAL_DATASET) # train_data
-    earlyStopping = EarlyStopping(PATIENCE, verbose = True, path = os.path.join(MODEL_STORE, 'unetr_chkpoint.pt')) # init earlystopping
+    earlyStopping = EarlyStopping(PATIENCE, verbose = True, path = os.path.join(MODEL_STORE, 'unetr_chkpoint.pt')) # init earlystopping: _2 is SGD optim
 
     total_dataset = (len(subject))
     TRAIN_SIZE = int(TRAIN_RATIO * total_dataset)
@@ -119,23 +124,23 @@ if __name__ == "__main__":
         train_dataset,
         batch_size = BATCH_SIZE,
         shuffle = True,
-        num_workers=0 #multiprocessing.cpu_count(),
+        num_workers=0#multiprocessing.cpu_count(), # import multiprocessing
     )
 
     VALID_LOADER = DataLoader(
         valid_dataset,
         batch_size = BATCH_SIZE,
         shuffle = True,
-        num_workers=0 #multiprocessing.cpu_count(),
+        num_workers=0#multiprocessing.cpu_count(), # import multiprocessing
     )
 
     model = UNETR_MONAI() # unetr official(monai)
-    print(torchinfo.summary(model, input_size=(BATCH_SIZE,1,128,128,128))) # summary
+    # print(torchinfo.summary(model, input_size=(BATCH_SIZE,1,H,W,D))) # summary
 
-    # optimizer = torch.optim.Adam(model.parameters(), lr = 1e-04, eps = 1e-09) # learning rate 0.00001
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
-    criterion = DiceCELoss(to_onehot_y=False, sigmoid=True).to(device) # diceCE loss monai
-
+    # optimizer = torch.optim.SGD(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-7)
+    criterion = DiceCELoss(to_onehot_y=False, sigmoid=True).to(device) # DiceCE(Cross Entropy) loss monai
+    
     for epochs in range(EPOCH_SIZE):
         train_loss = train(TRAIN_LOADER, model, optimizer, criterion, epochs)
         valid_loss = eval(VALID_LOADER, model, criterion, epochs)
