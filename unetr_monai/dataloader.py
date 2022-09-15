@@ -7,70 +7,79 @@ import numpy as np
 from glob import glob
 from tqdm import tqdm
 
+### Height, Width, Dimension Config ###
 H = 256
 W = 256
 D = 176
 
-def nnUNet_CustomDataset(base_path, mode, NUM_OF_DATA):
-    MODE_DICT = {"train":"Tr", "test":"Ts"}
-    SUBJECTS = []
-    FLAG = 0
 
-    labels_path = os.path.join(base_path, 'labels{}'.format(MODE_DICT[mode]))
-    images_path = os.path.join(base_path, 'images{}'.format(MODE_DICT[mode]))
+class nnUNet_CustomDataset():
+    def __init__(self, base_path, mode, NUM_OF_DATA):
+        MODE_DICT = {"train":"Tr", "test":"Ts"}
+        self.FLAG = 0
+        self.NUM_OF_DATA = NUM_OF_DATA
 
-    labelsList = sorted(glob('{}/*.nii.gz'.format(labels_path)))[:NUM_OF_DATA]
-    imagesList = sorted(glob('{}/*.nii.gz'.format(images_path)))[:NUM_OF_DATA]
+        self.labels_path = os.path.join(base_path, 'labels{}'.format(MODE_DICT[mode])) 
+        self.images_path = os.path.join(base_path, 'images{}'.format(MODE_DICT[mode]))
 
-    assert len(labelsList) == len(imagesList)
-        
-    for (img_path, lab_path) in tqdm(zip(imagesList, labelsList), desc=f"[Torchio DataLoader: {NUM_OF_DATA}]"):
-        # print(img_path, lab_path)
-        if FLAG == 0:
-            # print('space reference has been created')
-            # img_refer = tio.ScalarImage(img_path)
-            SPACE_REF = tio.LabelMap(lab_path)
-            FLAG = 1
+        self.labelsList = sorted(glob('{}/*.nii.gz'.format(self.labels_path)))[1000:1000+self.NUM_OF_DATA]
+        self.imagesList = sorted(glob('{}/*.nii.gz'.format(self.images_path)))[1000:1000+self.NUM_OF_DATA]
 
-        subject = tio.Subject(
-            IMG = tio.ScalarImage(img_path),
-            LABEL = tio.LabelMap(lab_path),
-        )
+    def __len__(self):
+        # assert len(labelsList) == len(imagesList)
+        return len(self.imagesList)
 
-        transform = tio.Compose([tio.ToCanonical(), 
-                                 tio.Resample(SPACE_REF),
-                                tio.CropOrPad((H,W,D), mask_name='LABEL'),
-                                #  tio.Resize((208,208,208), image_interpolation='linear', label_interpolation='nearest'), # 128, 128, 128
-                                 tio.RescaleIntensity(out_min_max=(0, 1)),
-                                 tio.ZNormalization(masking_method=lambda x: x > x.mean()),
-                                #  tio.EnsureShapeMultiple(16),
-                                ])
-        subject_transformed = transform(subject)
-        # print(subject_transformed.LABEL.count_labels())
+    def __getitem__(self, idx) :
+        SUBJECTS = []
+        for (img_path, lab_path) in tqdm(zip(self.imagesList[idx], self.labelsList[idx])):
+            if self.FLAG == 0:
+                self.SPACE_REF = tio.LabelMap(lab_path)
+                self.FLAG = 1
 
-        label_target = subject_transformed.LABEL.data
-        # print(subject_transformed.LABEL.data.shape)
+            subject = tio.Subject(
+                IMG = tio.ScalarImage(img_path),
+                LABEL = tio.LabelMap(lab_path),
+            )
 
-        bg = torch.zeros((label_target.shape)).squeeze() 
-        gm = torch.zeros((label_target.shape)).squeeze()
-        wm = torch.zeros((label_target.shape)).squeeze()
-        csf = torch.zeros((label_target.shape)).squeeze()
-        fat = torch.zeros((label_target.shape)).squeeze()
+            transform = tio.Compose([tio.ToCanonical(), 
+                                    tio.Resample(self.SPACE_REF),
+                                    tio.CropOrPad((H,W,D), mask_name='LABEL'),
+                                    tio.RescaleIntensity(out_min_max=(0, 1)),
+                                    tio.ZNormalization(masking_method=lambda x: x > x.mean()),
+                                    #  tio.EnsureShapeMultiple(16),
+                                    tio.RandomFlip(axes=('LRAPIS'), flip_probability=0.5),
+                                    tio.RandomGamma(log_gamma=(-0.2, 0.2)),
+                                    ])
 
-        y1, x1, z1 = torch.where((label_target.squeeze() == 1)) # gm
-        y2, x2, z2 = torch.where((label_target.squeeze() == 2)) # wm
-        y3, x3, z3 = torch.where((label_target.squeeze() == 3)) # csf
-        y4, x4, z4 = torch.where((label_target.squeeze() == 4)) # fat
+            # if subject.IMG.data.shape[1] < subject.IMG.data.shape[3]: 
+            #     subject.IMG.data = torch.transpose(subject.IMG.data, 1, 3)
+            subject_transformed = transform(subject)
 
-        gm[y1, x1, z1] = 1
-        wm[y2, x2, z2] = 2
-        csf[y3, x3, z3] = 3
-        fat[y4, x4, z4] = 4
+            label_target = subject_transformed.LABEL.data
 
-        subject_transformed.LABEL.data = torch.stack((bg, gm, wm, csf, fat))
-        SUBJECTS.append(subject_transformed)
+            ### change this part when you want to making a multi-label based label ###
+            bg = torch.zeros((label_target.shape)).squeeze() 
+            gm = torch.zeros((label_target.shape)).squeeze()
+            wm = torch.zeros((label_target.shape)).squeeze()
+            csf = torch.zeros((label_target.shape)).squeeze()
+            fat = torch.zeros((label_target.shape)).squeeze()
 
-    return SUBJECTS
+            y1, x1, z1 = torch.where((label_target.squeeze() == 1)) # gm
+            y2, x2, z2 = torch.where((label_target.squeeze() == 2)) # wm
+            y3, x3, z3 = torch.where((label_target.squeeze() == 3)) # csf
+            y4, x4, z4 = torch.where((label_target.squeeze() == 4)) # fat
+
+            gm[y1, x1, z1] = 1
+            wm[y2, x2, z2] = 2
+            csf[y3, x3, z3] = 3
+            fat[y4, x4, z4] = 4
+
+            subject_transformed.LABEL.data = torch.stack((bg, gm, wm, csf, fat))
+            ### change this part when you want to making a multi-label based label ###
+
+            SUBJECTS.append(subject_transformed)
+
+        return SUBJECTS
 
 
 class EarlyStopping:

@@ -7,7 +7,7 @@ import multiprocessing
 from tqdm import tqdm
 from torchio import DATA
 from torch.utils.data import DataLoader
-from model import unetRModel, UNETR_MONAI
+from model import UNETR_MONAI
 
 import nibabel as nib
 
@@ -20,6 +20,16 @@ W = 256
 D = 176
 
 
+# def test_data(nii_path):
+#     nii_raw_affine = nib.load(nii_path)
+#     nii_raw = nib.load(nii_path).get_fdata()
+#     nii_shape = nii_raw.shape
+
+#     print(nii_raw.shape)
+#     if nii_raw.shape[0] < nii_raw.shape[2]: nii_raw = np.swapaxes(nii_raw, 0, 2)
+#     print(nii_raw.shape)
+    
+
 def make_refer(nii_path): # space normalization: make a reference 
     SPACE_REF = tio.ScalarImage(nii_path)
 
@@ -27,23 +37,26 @@ def make_refer(nii_path): # space normalization: make a reference
 
 def test_data(nii_path, SPACE_REF):
     SUBJECTS = []
-    # AFFINE = []
 
     subject = tio.Subject(
-            IMG = tio.ScalarImage(nii_path)
+            IMG = tio.ScalarImage(nii_path),
         )
 
     transform = tio.Compose([tio.ToCanonical(), 
-                                tio.Resample(SPACE_REF),
-                                tio.CropOrPad((256,256,176)),
-                            #  tio.Resize((208,208,208), image_interpolation='linear', label_interpolation='nearest'), # 128, 128, 128
-                                tio.RescaleIntensity(out_min_max=(0, 1)),
-                                tio.ZNormalization(masking_method=lambda x: x > x.mean()),
-                                tio.CopyAffine('IMG')
+                             tio.Resample(SPACE_REF),
+                             tio.Resize((H,W,D)),
+                             # tio.CropOrPad((D,H,W)),
+                             tio.RescaleIntensity(out_min_max=(0, 1)),
+                             tio.ZNormalization(masking_method=lambda x: x > x.mean()),
+                             tio.CopyAffine('IMG')
                             ])
 
+
     subject_transformed = transform(subject)
-    # AFFINE.append(subject_transformed.shape)
+    if subject_transformed.IMG.data.shape[1] < subject_transformed.IMG.data.shape[3]: 
+        subject_transformed.IMG.data = torch.transpose(subject_transformed.IMG.data, 1, 3)
+        print(subject_transformed.IMG.data.shape)
+
     SUBJECTS.append(subject_transformed)
 
     return SUBJECTS
@@ -62,16 +75,15 @@ def eval(dataloader, model, nii_aff):
         for batch_idx, batch in enumerate(tqdm(dataloader, desc='[TorchIO] TEST')):
             #nib.save(nib.Nifti1Image(batch['IMG'][DATA].numpy(), affine=nii_aff), '/home/pmx/src/test/T1w_Origin.nii.gz')# nifti save
             test_data = batch['IMG'][DATA].to(device, dtype=torch.float)
-            
             output_test = model(test_data)
-
+            
     return output_test
 
 
 def load_affine(nii_path):
     nii_aff = nib.load(nii_path)
 
-    return nii_aff.affine
+    return nii_aff.get_fdata().shape, nii_aff.affine
 
 
 if __name__ == "__main__":
@@ -83,7 +95,7 @@ if __name__ == "__main__":
 
     if FLAG == 0:
         SPACE_REF = make_refer(test_path)
-        nii_aff = load_affine(test_path)
+        nii_shape, nii_aff = load_affine(test_path)
         FLAG = 1
 
     subject = test_data(test_path, SPACE_REF) # , nii_ext 
@@ -91,7 +103,7 @@ if __name__ == "__main__":
 
     model.load_state_dict(weight['model_state_dict'])
 
-    print(torchinfo.summary(model, input_size=(1,1,H,W,D))) # summary
+    # print(torchinfo.summary(model, input_size=(1,1,H,W,D))) # summary
     test_dataset = tio.SubjectsDataset(subject)
 
     TEST_LOADER = DataLoader(
@@ -102,16 +114,21 @@ if __name__ == "__main__":
     )
 
     nii_output = eval(TEST_LOADER, model, nii_aff) # tensor (B, C, 128, 128, 128)
-    
+
     # nii_output = F.softmax(nii_output, 1)
     nii_output = torch.argmax(nii_output, 1)
     nii_output = nii_output.to(dtype=torch.int8) # type cast
-    nii_output = nii_output.squeeze() # (C, n, n, n)
-    
-    print(torch.unique(nii_output))
-    print(nii_output.shape)
 
-    nii_output = nii_output.cpu().detach().numpy()
+    # if nii_output.shape[1] > nii_output.shape[3]: 
+    #     nii_output.data = torch.transpose(nii_output.data, 1, 3)
+
+    transform_raw = tio.Resize(target_shape=nii_shape, image_interpolation='nearest')
+    nii_transformed = transform_raw(nii_output.cpu())
+    nii_transformed = nii_transformed.squeeze() # (C, n, n, n)
+
+    # nii_output = nii_output.squeeze() # (C, n, n, n)
+    # nii_output = nii_output.cpu().detach().numpy()
+    nii_output = nii_transformed.detach().numpy()
 
     nii_img = nib.Nifti1Image(nii_output, affine=nii_aff) # nii_aff
     nib.save(nii_img, test_path.replace("_0000", "_Unetr"))

@@ -32,17 +32,6 @@ H = 256
 W = 256
 D = 176
 
-# ### save chkpoint weight if some conditions are 'True'
-# def save_chkpoint(epoch_num, model, optimizer, cost, model_path):
-#     print("EPOCH [{}], MODEL SAVE: {}".format(epochs+1, os.path.join(model_path, 'unetr_chkpoint.pt')))
-#     torch.save({"model": "UNetR3d",
-#                 "epoch": epoch_num,
-#                 "model_state_dict": model.state_dict(),
-#                 "optimizer_state_dict": optimizer.state_dict(),
-#                 "cost": cost,
-#                 "description": "checkpoint_{}".format(epoch_num),}, os.path.join(model_path, 'unetr_chkpoint.pt'))
-# else: pass
-
 
 ### model train
 def train(dataloader, model, optimizer, loss_function, epoch):
@@ -99,7 +88,7 @@ if __name__ == "__main__":
     BASE = '/home/pmx/src/pytorch/data'
     MODEL_STORE = '/home/pmx/model/trained' # model store path
 
-    TOTAL_DATASET = 220 #280 # number of dataset for use
+    TOTAL_DATASET = 220 # number of dataset for use
     TRAIN_RATIO = 0.85
     VALID_RATIO = 0.15
     BATCH_SIZE = 1
@@ -111,11 +100,15 @@ if __name__ == "__main__":
 
     total_dataset = (len(subject))
     TRAIN_SIZE = int(TRAIN_RATIO * total_dataset)
-    # VALID_SIZE = int(VALID_RATIO * total_dataset)
+    VALID_SIZE = total_dataset - TRAIN_SIZE
 
+    print(f'\n### Torchio DataLoader_Train: [{TRAIN_SIZE}] ###')
     train_subjects = subject[:TRAIN_SIZE]
+
+    print(f'\n### Torchio DataLoader_Valid: [{VALID_SIZE}] ###')
     valid_subjects = subject[TRAIN_SIZE:]
-    # valid_subjects = subject[TRAIN_SIZE:TRAIN_SIZE+VALID_SIZE]
+
+    # print(len(train_subjects), len(valid_subjects))
 
     train_dataset = tio.SubjectsDataset(train_subjects)
     valid_dataset = tio.SubjectsDataset(valid_subjects)
@@ -138,7 +131,7 @@ if __name__ == "__main__":
     # print(torchinfo.summary(model, input_size=(BATCH_SIZE,1,H,W,D))) # summary
 
     # optimizer = torch.optim.SGD(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-7)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
     criterion = DiceCELoss(to_onehot_y=False, sigmoid=True).to(device) # DiceCE(Cross Entropy) loss monai
     
     for epochs in range(EPOCH_SIZE):
