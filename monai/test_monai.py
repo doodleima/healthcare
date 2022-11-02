@@ -7,28 +7,19 @@ import multiprocessing
 from tqdm import tqdm
 from torchio import DATA
 from torch.utils.data import DataLoader
-from model import UNETR_MONAI
+from model import UNETR_MONAI, SwinUNETR_MONAI
 
 import nibabel as nib
 
 import torchinfo
 # import torch.nn.functional as F
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-H = 256
-W = 256
-D = 176
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')    
+PATCH_SIZE = 64
+QUEUE_LEN = 500
+VOL_SAMPLES = 16
 
-# def test_data(nii_path):
-#     nii_raw_affine = nib.load(nii_path)
-#     nii_raw = nib.load(nii_path).get_fdata()
-#     nii_shape = nii_raw.shape
-
-#     print(nii_raw.shape)
-#     if nii_raw.shape[0] < nii_raw.shape[2]: nii_raw = np.swapaxes(nii_raw, 0, 2)
-#     print(nii_raw.shape)
-    
 
 def make_refer(nii_path): # space normalization: make a reference 
     SPACE_REF = tio.ScalarImage(nii_path)
@@ -42,13 +33,15 @@ def test_data(nii_path, SPACE_REF):
             IMG = tio.ScalarImage(nii_path),
         )
 
-    transform = tio.Compose([tio.ToCanonical(), 
-                             tio.Resample(SPACE_REF),
-                             tio.Resize((H,W,D)),
-                             # tio.CropOrPad((D,H,W)),
+    # affine_copied = tio.CopyAffine('IMG')
+
+    transform = tio.Compose([tio.ToCanonical(),
                              tio.RescaleIntensity(out_min_max=(0, 1)),
-                             tio.ZNormalization(masking_method=lambda x: x > x.mean()),
-                             tio.CopyAffine('IMG')
+                             tio.EnsureShapeMultiple(16),
+                             tio.RandomFlip(axes=('LRAPIS'), flip_probability=0.5),
+                             tio.RandomBiasField(coefficients=(-0.5, 0.5), order=3),
+                             tio.RandomGamma(log_gamma=(-0.2, 0.2)),
+                             tio.CropOrPad((256,256,256), mask_name='LABEL'),
                             ])
 
 
@@ -63,7 +56,7 @@ def test_data(nii_path, SPACE_REF):
 
 
 def model_load(model_path):
-    model = UNETR_MONAI()
+    model = SwinUNETR_MONAI()
     chkpoint = torch.load(model_path)
 
     return model, chkpoint
@@ -87,11 +80,11 @@ def load_affine(nii_path):
 
 
 if __name__ == "__main__":
-    BATCH_SIZE = 1
+    BATCH_SIZE = 4
     FLAG = 0
 
     test_path = '/home/pmx/src/test/T1w_0000.nii.gz'
-    model_path = '/home/pmx/model/trained/unetr_chkpoint.pt'
+    model_path = '/home/pmx/model/trained/unetr_chkpoint_latest.pt'
 
     if FLAG == 0:
         SPACE_REF = make_refer(test_path)
@@ -115,9 +108,10 @@ if __name__ == "__main__":
 
     nii_output = eval(TEST_LOADER, model, nii_aff) # tensor (B, C, 128, 128, 128)
 
-    # nii_output = F.softmax(nii_output, 1)
+    print(nii_output.shape)
     nii_output = torch.argmax(nii_output, 1)
     nii_output = nii_output.to(dtype=torch.int8) # type cast
+
 
     # if nii_output.shape[1] > nii_output.shape[3]: 
     #     nii_output.data = torch.transpose(nii_output.data, 1, 3)

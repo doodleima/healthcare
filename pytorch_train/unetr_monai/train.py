@@ -85,8 +85,8 @@ def eval(dataloader, model, loss_function, epoch):
 
 
 if __name__ == "__main__":
-    BASE = '/home/pmx/src/pytorch/data'
-    MODEL_STORE = '/home/pmx/model/trained' # model store path
+    BASE = 'absolute/base/path'
+    MODEL_STORE = 'absolute/input/path' # model store path
 
     TOTAL_DATASET = 220 # number of dataset for use
     TRAIN_RATIO = 0.85
