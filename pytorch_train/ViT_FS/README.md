@@ -1,6 +1,5 @@
 # ViT + FS(FastsurferCNN)
-
-Vision Transformer + FastsurferCNN(Backbone)
+### Vision Transformer + FastsurferCNN(Backbone)
 
   I. FSCNN Backbone: implemented, 2d/3d(ADDED), TODO things are in the below 
   
