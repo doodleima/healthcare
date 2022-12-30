@@ -9,11 +9,8 @@ from glob import glob
 from tqdm import tqdm
 # from random import randint
 
-### Height, Width, Dimension Config ### 
-# H, W, D = 64, 64, 64 ### patches ### 256
 
-
-class UNetR_CustomDataset():
+class torchCustomDataset():
     def __init__(self, base_path, num_of_cases, transform=None, isTest=False, shuffle=True):
         MODE_DICT = {"train":"Tr", "test":"Ts"}
         self.FLAG = 0
@@ -61,36 +58,42 @@ class UNetR_CustomDataset():
            
             ### white, grey matter, CSF and head fat to detect 
             bg = torch.zeros((label_target.shape)).squeeze()
+            # wb = torch.zeros((label_target.shape)).squeeze()
+            # for i in [1,2,3,5]: wb[torch.where((label_shape == i))] = 1
+
             gm = torch.zeros((label_target.shape)).squeeze()
             wm = torch.zeros((label_target.shape)).squeeze()
             csf = torch.zeros((label_target.shape)).squeeze()
-            fat = torch.zeros((label_target.shape)).squeeze()
             stem = torch.zeros((label_target.shape)).squeeze()
+            # # fat = torch.zeros((label_target.shape)).squeeze()
 
+            # # ukbiobank >> reversed(gm, wm, csf)
             y1, x1, z1 = torch.where((label_shape == 1)) # gm
             y2, x2, z2 = torch.where((label_shape == 2)) # wm
             y3, x3, z3 = torch.where((label_shape == 3)) # csf
-            y4, x4, z4 = torch.where((label_shape == 4)) # fat
             y5, x5, z5 = torch.where((label_shape == 5)) # brain stem
+            # # y4, x4, z4 = torch.where((label_shape == 5)) # fat
 
             gm[y1, x1, z1] = 1
             wm[y2, x2, z2] = 2
             csf[y3, x3, z3] = 3
-            fat[y4, x4, z4] = 4
-            stem[y5, x5, z5] = 5
+            stem[y5, x5, z5] = 4
+            # # fat[y4, x4, z4] = 5
 
-            # subject_transformed.LABEL.data = torch.stack((bg, gm, wm, csf, fat))
-            subject_transformed.LABEL.data = torch.stack((bg, gm, wm, csf, fat, stem))
+            # subject_transformed.LABEL.data = torch.stack((bg, wb))
+            # subject_transformed.LABEL.data = torch.stack((bg, gm, wm, csf, fat, stem))
+            subject_transformed.LABEL.data = torch.stack((bg, gm, wm, csf, stem))
             SUBJECTS.append(subject_transformed)
 
         return SUBJECTS
 
 
 class EarlyStopping:
-    def __init__(self, patience=5, verbose=False, path='checkpoint_latest.pt', delta=0):
+    def __init__(self, patience=5, verbose=False, model_name='swinUNETR', path='checkpoint_latest.pt', delta=0):
         self.counter = 0                # accumlated value
         self.delta = delta              # decay
         self.path = path                # target path (model)
+        self.model_name = model_name
 
         if os.path.exists(path):
             self.model_loaded = True
@@ -107,14 +110,14 @@ class EarlyStopping:
         if val_loss > self.best_score + self.delta:
             self.counter += 1
             print(f"[VALID LOSS] Best score({self.best_score:.4f}) is better than Current one({val_loss:.4f}), Accumulated {self.counter}")
-            torch.save({"model": "swinUNETR", 
+            torch.save({"model": self.model_name.replace('_best', '_latest'), 
                         "model_state_dict": model.state_dict(),
-                        "model_loss":val_loss}, self.path)
+                        "model_loss":val_loss}, self.path.replace('_best', '_latest'))
 
         ### best score > prev score
         else:
             print(f'[VALID LOSS] Best score({self.best_score:.4f}), Current({val_loss:.4f})')
-            torch.save({"model": "swinUNETR",
+            torch.save({"model": self.model_name.replace('_latest', '_best'),
                     "model_state_dict": model.state_dict(),
                     "model_loss":val_loss}, self.path.replace('_latest', '_best'))
 
