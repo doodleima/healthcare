@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+import vit
+
 # input parameter: Dictionary Type
 '''
     params = {'dimension': DIM, 
@@ -328,6 +330,8 @@ class fsCNN(nn.Module):
         
         self.output = CDB_Output(params)
         
+        # self.vit_out = vit.ViT(params)
+
         ### Net Initialization
         for m in self.modules():
             if isinstance(m, nn.Conv2d): nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
@@ -353,6 +357,8 @@ class fsCNN(nn.Module):
             logits = self.output.forward(out_dec1)
 
         else: # dim 3
+            # x0, x1, x2, x3 = self.vit_out(x)
+
             skip_enc1, out_enc1, indice1 = self.input.forward(x)
             skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1)
             skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2)

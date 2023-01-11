@@ -3,23 +3,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from einops import rearrange, repeat
+from einops.layers.torch import Reduce
 
+from torchsummary import summary
+
+import numpy as np
 
 ### Patch & Positional Embedding
 class EMB(nn.Module):
     def __init__(self, params):
         super(EMB, self).__init__()
         
-        self.patch_size = int(params['patch_size']) #if params.get('patch_size') != None else 8 # default 16
+        self.patch_size = int(params['patch_size']*2) 
         self.input_c = int(params['num_channels'])
-        self.emb_size = int(params['emb_size']) #if params.get('emb_size') != None else 4096 (128, 128, 128)
+        self.emb_size = int(params['emb_size']) 
         self.img_hwd = int(params['img_hwd'])
 
+        self.dropout_rate = params['drop_rate']
+
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.emb_size)) ### class token '+1'
-        self.emb_pos = nn.Parameter(torch.randn((self.img_hwd//self.patch_size)**3+1, self.emb_size)) # hwd/p^3 +1, embedding size
+        self.emb_pos = nn.Parameter(torch.randn((self.img_hwd//self.patch_size)**3, self.emb_size)) # hwd/p^3 '+1', embedding size
 
         self.conv_layer1 = nn.Conv3d(in_channels=self.input_c, out_channels=self.emb_size, kernel_size=self.patch_size, stride=self.patch_size)
-
+        self.dropout_layer1 = nn.Dropout(self.dropout_rate)
 
     def forward(self, x):
         b, c, h, w, d = x.shape # 5D
@@ -27,9 +33,11 @@ class EMB(nn.Module):
         x = self.conv_layer1(x)
         x = rearrange(x, 'b e (h) (w) (d) -> b (h w d) e')  # x = x.reshape(b, -1, self.emb_size).transpose(1, 2)
         
-        cls_token = repeat(self.cls_token, "() n e -> b n e", b=b)
-        x = torch.cat([cls_token, x], dim=1)
+        ### non classification layer - cls token X
+        # cls_token = repeat(self.cls_token, "() n e -> b n e", b=b)
+        # x = torch.cat([cls_token, x], dim=1)
         x += self.emb_pos
+        x = self.dropout_layer1(x)  # added
         
         return x
 
@@ -77,12 +85,12 @@ class MLP(nn.Module):
         super(MLP, self).__init__()
 
         self.expansion = 4        
-        self.emb_size = int(params['emb_size']) #if params.get('emb_size') != None else 4096
-        self.dropout_rate = float(params['drop_rate']) #if params.get('drop_rate') != None else 0.2
+        self.emb_size = int(params['emb_size'])
+        self.dropout_rate = float(params['drop_rate'])
 
         self.linear_layer1 = nn.Linear(self.emb_size, self.expansion * self.emb_size)
         self.linear_layer2 = nn.Linear(self.expansion * self.emb_size, self.emb_size)
-        self.relu = nn.SiLU() #nn.GELU() if params['silu'] == False else nn.SiLU()
+        self.relu = nn.SiLU()
         self.dropout = nn.Dropout()
 
 
@@ -110,9 +118,9 @@ class MLP(nn.Module):
 
 
 ### Transformer Encoder Block
-class TF_enc(nn.Module):
+class Enc_basic(nn.Module):
     def __init__(self, params):
-        super(TF_enc, self).__init__()
+        super(Enc_basic, self).__init__()
         # TransFormer Encoder Block
 
         self.emb_size = int(params['emb_size'])
@@ -124,11 +132,13 @@ class TF_enc(nn.Module):
             MSA(params),
             nn.Dropout(self.dropout_rate)
         )
+
         self.residual_layer2 = nn.Sequential(
             nn.LayerNorm(self.emb_size),
             MLP(params),
             nn.Dropout(self.dropout_rate)
         )
+
 
     def forward(self, x):
         res = x
@@ -142,34 +152,90 @@ class TF_enc(nn.Module):
         return x2
 
 
-class ViT(nn.Module): # or nn.Sequential(super class init)
+class TF_enc(nn.Module):
     def __init__(self, params):
-        super(ViT), self).__init__()
+        super().__init__()
+        num_layers = params['num_layers']
 
-        self.embbed = EMB(params)
-        self.enc = TF_enc(params)
+        self.emb_layer1 = EMB(params)
+        self.blocks = nn.ModuleList([Enc_basic(params) for _ in range(num_layers)])
 
     def forward(self, x):
-        pass
+        x_out = []
+        x = self.emb_layer1(x)
+        for blocks in self.blocks: x_out.append(blocks(x))
+
+        return x_out
+
+
+class ViT(nn.Module):
+    def __init__(self, params):
+        super().__init__()
+        
+        self.patch_size = params['patch_size']
+        
+        self.patch = (self.patch_size*2, self.patch_size*2, self.patch_size*2) 
+        self.patch1 = self.patch_size
+        self.patch2 = int(self.patch_size/2) 
+        self.patch3 = int(self.patch_size/4) 
+
+        self.img_size = (params['img_hwd'], params['img_hwd'], params['img_hwd'])
+        self.emb_size = params['emb_size']
+        self.proj_axis = (0, 3 + 1) + tuple(d + 1 for d in range(3)) # 3D
+        
+        self.feat_size = tuple(img_d // p_d for img_d, p_d in zip(self.img_size, self.patch))
+        self.proj_reshape = list(self.feat_size) + [self.emb_size]
+        
+        self.input_c = int(params['num_channels']) # N2C
+
+        self.tf_enc_layer1 = TF_enc(params)
+
+        self.deconv_layer1 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch, stride=self.patch)
+        self.deconv_layer2 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch1, stride=self.patch1)
+        self.deconv_layer3 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch2, stride=self.patch2)
+        self.deconv_layer4 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch3, stride=self.patch3)
+
+
+    def proj_feat(self, x):
+        new_shape = [x.size()[0]] + self.proj_reshape
+        x = x.view(new_shape)
+        x = x.permute(self.proj_axis).contiguous()
+
+        return x      
+
+
+    def forward(self, x): 
+        x_out = self.tf_enc_layer1(x)
+
+        x_out_raw = self.proj_feat(x_out[0])
+        x_out1 = self.proj_feat(x_out[1])
+        x_out2 = self.proj_feat(x_out[2])
+        x_out3 = self.proj_feat(x_out[3])
+
+        ### deconvolution
+        x_out_raw = self.deconv_layer1(x_out_raw).transpose(0, 1)
+        x_out1 = self.deconv_layer2(x_out1).transpose(0, 1)
+        x_out2 = self.deconv_layer3(x_out2).transpose(0, 1)
+        x_out3 = self.deconv_layer4(x_out3).transpose(0, 1)
+
+        return x_out_raw, x_out1, x_out2, x_out3
 
 
 if __name__ == '__main__':
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     h, w, d = 128, 128, 128
-    patch_size = h/8
-    emb_size = (h/patch_size)**3
+    patch_size = 8
+    emb_size = 1024 # hidden size
+    mlp_dim = 2048 # mlp dim
+    num_heads = 32
+    drop_rate = 0.2
     
     img = torch.randn([1, 1, h, w, d])
-    params = {'num_channels':1, 'img_hwd':h, 'emb_size':emb_size, 'patch_size':patch_size, 'num_heads':32, 'drop_rate':0.2}
-    embedding = EMB(params=params)
-    attention = MSA(params=params)
-    perceptron = MLP(params=params)
-    enc = TF_enc(params=params)
+    params = {'num_channels':1, 'num_layers':4, 'mlp_dim':mlp_dim, 'img_hwd':h, 'emb_size':emb_size, 'patch_size':patch_size, 'num_heads':num_heads, 'drop_rate':drop_rate}
+    model = ViT(params=params)
 
-    z = embedding(img)
-    print(z.size())
-    y = attention(z)
-    print(y.size())
-    x = perceptron(y)
-    print(x.size())
-    w = enc(x)
-    print(w.size())
+    summary(model, img)
+
+    x0, x1, x2, x3 = model(img.to(device))
+    for i in [x0, x1, x2, x3]: print(i.shape,'\n')
