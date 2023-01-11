@@ -1,10 +1,17 @@
 import torch
 import torch.nn as nn
 
-
 # input parameter: Dictionary Type
-
-
+'''
+    params = {'dimension': DIM, 
+              'act_function': 'prelu' or 'mish', 
+              'num_channels': 1, 
+              'num_filters': 32, 
+              'kernel_height': 3, 'kernel_width': 3, 
+              'stride_c': 1, 'stride_p': 2,
+              'kernel_c': 1, 'kernel_p': 2, 
+              'output_classes': 5}
+'''
 
 ### CDB Common Structure(Attr)
 class CDB_struc(nn.Module):
@@ -24,7 +31,7 @@ class CDB_struc(nn.Module):
         stride = int(params['stride_c'])
 
         # change activation function if sliu == True
-        self.relu = nn.PReLU() if params['silu'] == False else nn.SiLU()
+        self.relu = nn.PReLU() if params['act_function'] == 'prelu' else nn.Mish()
 
         if self.dim == 3: # 3d
             pad_d = int((params['kernel_depth']-1) / 2)
@@ -60,17 +67,16 @@ class CDB_Basic(CDB_struc):
         dim = self.dim + 2
 
         # ActFunction(Previous Block)
-        x0 = self.relu(x)
+        # x0 = self.relu(x)
         
         # [CONV - BN - (cat, max) - ActFunction]*2
-        x1 = self.conv_layer1(x0)
+        x1 = self.conv_layer1(x)
         x1_bn = torch.unsqueeze(self.bn0(x1), dim)
-        x0_bn = torch.unsqueeze(x, dim)
+        x0 = torch.unsqueeze(x, dim)
         
-        x2 = torch.cat((x1_bn, x0_bn), dim=dim)        # maxout
+        x2 = torch.cat((x1_bn, x0), dim=dim)           # maxout
         x2_max, _ = torch.max(x2, dim)                 # maxout
         x2 = self.relu(x2_max)
-
         
         x2 = self.conv_layer2(x2)
         x2_bn = torch.unsqueeze(self.bn1(x2), dim)
@@ -104,25 +110,38 @@ class CDB_Input(CDB_struc):
     def forward(self, x):        
         dim = self.dim + 2 # dimension 4(2d), 5(3d)
 
-        # INPUT - BN
-        x0_bn = self.bn0(x)
+        # # INPUT - BN
+        # x0_bn = self.bn0(x)
 
-        # CONV - BN - ActFunction
-        x0 = self.conv_layer1(x0_bn)
+        # # CONV - BN - ActFunction
+        # x0 = self.conv_layer1(x0_bn) ### 1
+        # x1_bn = self.bn1(x0)
+        # x1 = self.relu(x1_bn)
+
+        # x1 = self.conv_layer2(x1)
+        # x2_bn = self.bn2(x1)
+
+        # x2 = torch.cat((torch.unsqueeze(x2_bn, dim), torch.unsqueeze(x1_bn, dim)), dim=dim)
+        # x2_max, _ = torch.max(x2, dim)
+        # x2 = self.relu(x2_max)
+
+        # x3 = self.conv_layer3(x2)
+        # x_out = self.bn3(x3)
+
+        # out_enc, indices = self.maxpool(x_out)           # Max Pooling layer
+        
+        x0 = self.conv_layer1(x)
+
         x1_bn = self.bn1(x0)
         x1 = self.relu(x1_bn)
 
         x1 = self.conv_layer2(x1)
-        x2_bn = self.bn2(x1)
+        x2 = torch.cat((torch.unsqueeze(x1, dim), torch.unsqueeze(x0, dim)), dim=dim)
+        x_out, _ = torch.max(x2, dim)
 
-        x2 = torch.cat((torch.unsqueeze(x2_bn, dim), torch.unsqueeze(x1_bn, dim)), dim=dim)
-        x2_max, _ = torch.max(x2, dim)
-        x2 = self.relu(x2_max)
-
-        x3 = self.conv_layer3(x2)
-        x_out = self.bn3(x3)
-        
-        out_enc, indices = self.maxpool(x_out)           # Max Pooling layer
+        x_out = self.bn2(x_out)
+        out_enc, indices = self.maxpool(x_out)
+        out_enc = self.relu(out_enc)
 
         return x_out, out_enc, indices                   # indices to skip connection
     
@@ -136,12 +155,14 @@ class CDB_Enc(CDB_Basic):
         kernel_size = int(params['kernel_p'])
         
         self.maxpool = nn.MaxPool3d(kernel_size=kernel_size, stride=stride_pool, return_indices=True) if self.dim ==3 else nn.MaxPool2d(kernel_size=kernel_size, stride=stride_pool, return_indices=True)
-        
-        
+        self.relu = nn.PReLU() if params['act_function'] == 'prelu' else nn.Mish()
+
+
     ## CDB Basic Block > ENC(Max Pooling Layer)
     def forward(self, x):        
         x_out = super(CDB_Enc, self).forward(x) # skip
         out_enc, indices = self.maxpool(x_out)
+        out_enc = self.relu(out_enc)
     
         return x_out, out_enc, indices
         
@@ -155,7 +176,8 @@ class CDB_Dec(CDB_Basic):
         kernel_size = int(params['kernel_p'])
         
         self.unpool = nn.MaxUnpool3d(kernel_size=kernel_size, stride=stride_pool) if self.dim ==3 else nn.MaxUnpool2d(kernel_size=kernel_size, stride=stride_pool)
-        
+        self.relu = nn.PReLU() if params['act_function'] == 'prelu' else nn.Mish()
+
         
     ## INPUT > UNPOOL + SKIP CONNECTION > CDB Basic Block 
     def forward(self, x, x_out, indices):        
@@ -166,7 +188,8 @@ class CDB_Dec(CDB_Basic):
         concatenated_max, _ = torch.max(torch.cat((unpool, x_out), dim=dim), dim)
 
         out_dec = super(CDB_Dec, self).forward(concatenated_max) # CDB Basic Block(Inherited from CDB_basic)
-        
+        out_dec = self.relu(out_dec)
+
         return out_dec
         
             
@@ -187,7 +210,7 @@ class CDB_BottleNeck(nn.Module):
         stride = int(params['stride_c'])
         
         # change activation function if sliu == True
-        self.relu = nn.PReLU() if params['silu'] == False else nn.SiLU()
+        self.relu = nn.PReLU() if params['act_function'] == 'prelu' else nn.Mish()
 
         if self.dim == 3: # 3d
             pad_d = int((params['kernel_depth']-1) / 2)
@@ -215,11 +238,33 @@ class CDB_BottleNeck(nn.Module):
     def forward(self, x):
         dim = self.dim + 2 # dimension 4(2d), 5(3d)
 
-        # Activation from pooled input
-        x0 = self.relu(x)
+        # # Activation from pooled input
+        # x0 = self.relu(x)
+
+        # # Convolution block 1
+        # x0 = self.conv_layer1(x0)
+        # x1_bn = self.bn0(x0)
+        # x0_bn = torch.unsqueeze(x, dim)
+        # x1_bn = torch.unsqueeze(x1_bn, dim)
+        # x1 = torch.cat((x1_bn, x0_bn), dim=dim)  # Concatenate along the 5th dimension NB x C x H x W x F
+        # x1_max, _ = torch.max(x1, dim)
+        # x1 = self.relu(x1_max)
+
+        # # Convolution block 2
+        # x1 = self.conv_layer2(x1)
+        # x2_bn = self.bn1(x1)
+        # x2_bn = torch.unsqueeze(x2_bn, dim)
+        # x1_max = torch.unsqueeze(x1_max, dim)
+        # x2 = torch.cat((x2_bn, x1_max), dim=dim)  # Concatenating along the 5th dimension
+        # x2_max, _ = torch.max(x2, dim)
+        # x2 = self.relu(x2_max)
+
+        # # Convolution block 3
+        # out = self.conv_layer3(x2)
+        # out = self.bn2(out)
 
         # Convolution block 1
-        x0 = self.conv_layer1(x0)
+        x0 = self.conv_layer1(x)
         x1_bn = self.bn0(x0)
         x0_bn = torch.unsqueeze(x, dim)
         x1_bn = torch.unsqueeze(x1_bn, dim)
@@ -234,13 +279,9 @@ class CDB_BottleNeck(nn.Module):
         x1_max = torch.unsqueeze(x1_max, dim)
         x2 = torch.cat((x2_bn, x1_max), dim=dim)  # Concatenating along the 5th dimension
         x2_max, _ = torch.max(x2, dim)
-        x2 = self.relu(x2_max)
-
-        # Convolution block 3
-        out = self.conv_layer3(x2)
-        out = self.bn2(out)
+        x_out = self.relu(x2_max)
         
-        return out
+        return x_out
         
     
     
@@ -315,12 +356,14 @@ class fsCNN(nn.Module):
             skip_enc1, out_enc1, indice1 = self.input.forward(x)
             skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1)
             skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2)
+            skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3) 
+
+            bottle_neck = self.bottle_neck(out_enc4)
             
-            bottle_neck = self.bottle_neck(out_enc3)
-            
-            out_dec3 = self.dec4.forward(bottle_neck, skip_enc3, indice3)
-            out_dec2 = self.dec3.forward(out_dec3, skip_enc2, indice2)
-            out_dec1 = self.dec2.forward(out_dec2, skip_enc1, indice1)
+            out_dec4 = self.dec4.forward(bottle_neck, skip_enc4, indice4)
+            out_dec3 = self.dec3.forward(out_dec4, skip_enc3, indice3)
+            out_dec2 = self.dec2.forward(out_dec3, skip_enc2, indice2)
+            out_dec1 = self.dec1.forward(out_dec2, skip_enc1, indice1)
             
             logits = self.output.forward(out_dec1)
 

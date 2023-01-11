@@ -39,16 +39,16 @@ class MSA(nn.Module):
     def __init__(self, params):
         super(MSA, self).__init__()
 
-        self.emb_size = int(params['emb_size']) #if params.get('emb_size') != None else 4096
-        self.num_heads = int(params['num_heads']) #if params.get('num_heads') != None else 16
-        self.dropout_rate = float(params['drop_rate']) #if params.get('drop_rate') != None else 0.2
+        self.emb_size = int(params['emb_size'])
+        self.num_heads = int(params['num_heads'])
+        self.dropout_rate = float(params['drop_rate'])
 
-        self.K = nn.Linear(self.emb_size, self.emb_size)# self.emb_size)
-        self.Q = nn.Linear(self.emb_size, self.emb_size)#, self.emb_size)
-        self.V = nn.Linear(self.emb_size, self.emb_size)#, self.emb_size)
+        self.K = nn.Linear(self.emb_size, self.emb_size)
+        self.Q = nn.Linear(self.emb_size, self.emb_size)
+        self.V = nn.Linear(self.emb_size, self.emb_size)
  
         self.drop_layer1 = nn.Dropout(self.dropout_rate)
-        self.proj_layer1 = nn.Linear(self.emb_size, self.emb_size)#, self.emb_size)
+        self.proj_layer1 = nn.Linear(self.emb_size, self.emb_size)
 
 
     def forward(self, x, mask: torch.Tensor=None):
@@ -75,9 +75,13 @@ class MSA(nn.Module):
 class MLP(nn.Module):
     def __init__(self, params):
         super(MLP, self).__init__()
-        
-        self.linear_layer1 = nn.Linear()
-        self.linear_layer2 = nn.Linear()
+
+        self.expansion = 4        
+        self.emb_size = int(params['emb_size']) #if params.get('emb_size') != None else 4096
+        self.dropout_rate = float(params['drop_rate']) #if params.get('drop_rate') != None else 0.2
+
+        self.linear_layer1 = nn.Linear(self.emb_size, self.expansion * self.emb_size)
+        self.linear_layer2 = nn.Linear(self.expansion * self.emb_size, self.emb_size)
         self.relu = nn.SiLU() #nn.GELU() if params['silu'] == False else nn.SiLU()
         self.dropout = nn.Dropout()
 
@@ -91,18 +95,18 @@ class MLP(nn.Module):
         return x
 
 
-### Residual Block
-class Residual(nn.Module):
-    def __init__(self, x):
-        super().__init__()
-        self.fn_layer = fn
+# ### Residual Block
+# class Residual(nn.Module):
+#     def __init__(self, fn):
+#         super().__init__()
+#         self.fn_layer = fn
 
-    def forward(self, x, **kwargs):
-        x_res = x
-        x_out = self.fn_layer(x, **kwargs)
-        x_out += x_res
+#     def forward(self, x, **kwargs):
+#         x_res = x
+#         x_out = self.fn_layer(x, **kwargs)
+#         x_out += x_res
 
-        return x
+#         return x
 
 
 ### Transformer Encoder Block
@@ -110,31 +114,62 @@ class TF_enc(nn.Module):
     def __init__(self, params):
         super(TF_enc, self).__init__()
         # TransFormer Encoder Block
-        
+
+        self.emb_size = int(params['emb_size'])
+        self.num_heads = int(params['num_heads'])
+        self.dropout_rate = float(params['drop_rate'])
+
+        self.residual_layer1 = nn.Sequential(
+            nn.LayerNorm(self.emb_size),
+            MSA(params),
+            nn.Dropout(self.dropout_rate)
+        )
+        self.residual_layer2 = nn.Sequential(
+            nn.LayerNorm(self.emb_size),
+            MLP(params),
+            nn.Dropout(self.dropout_rate)
+        )
+
+    def forward(self, x):
+        res = x
+        x1 = self.residual_layer1(x)
+        x1 += res
+
+        res2 = x1
+        x2 = self.residual_layer2(x1)
+        x2 += res2
+
+        return x2
+
+
+class ViT(nn.Module): # or nn.Sequential(super class init)
+    def __init__(self, params):
+        super(ViT), self).__init__()
+
+        self.embbed = EMB(params)
+        self.enc = TF_enc(params)
+
     def forward(self, x):
         pass
 
 
-# class ViT(nn.Module): # or nn.Sequential(super class init)
-#     def __init__(self, params):
-#         super(TF_enc), self).__init__()
-#         # TransFormer Encoder Block
-
-#     def forward(self, x):
-#         pass
-
-
-
 if __name__ == '__main__':
-    h, w, d = 160, 160, 160
+    h, w, d = 128, 128, 128
     patch_size = h/8
     emb_size = (h/patch_size)**3
     
     img = torch.randn([1, 1, h, w, d])
-    params = {'num_channels':1, 'img_hwd':h, 'emb_size':emb_size, 'patch_size':patch_size, 'num_heads':16, 'drop_rate':0.2}
+    params = {'num_channels':1, 'img_hwd':h, 'emb_size':emb_size, 'patch_size':patch_size, 'num_heads':32, 'drop_rate':0.2}
     embedding = EMB(params=params)
     attention = MSA(params=params)
+    perceptron = MLP(params=params)
+    enc = TF_enc(params=params)
+
     z = embedding(img)
     print(z.size())
-    z = attention(z)
-    print(z.size())
+    y = attention(z)
+    print(y.size())
+    x = perceptron(y)
+    print(x.size())
+    w = enc(x)
+    print(w.size())
