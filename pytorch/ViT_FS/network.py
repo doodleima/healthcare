@@ -1,7 +1,13 @@
 import torch
 import torch.nn as nn
 
-import vit
+import os
+import sys
+
+p = os.path.abspath('..')
+sys.path.insert(1, p)
+
+from ViT_FS import vit
 
 # input parameter: Dictionary Type
 '''
@@ -39,7 +45,8 @@ class CDB_struc(nn.Module):
             pad_d = int((params['kernel_depth']-1) / 2)
             kernel_d = int(params['kernel_depth']) 
 
-            self.conv_layer1 = nn.Conv3d(in_channels=conv_input, out_channels=conv_input2, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d))
+            # self.conv_layer1 = nn.Conv3d(in_channels=conv_input, out_channels=conv_input2, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d)) # x(raw)
+            self.conv_layer1 = nn.Conv3d(in_channels=conv_input2, out_channels=conv_input2, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d)) # x(TF enc output)
             self.conv_layer2 = nn.Conv3d(in_channels=conv_input2, out_channels=conv_input2, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d))
             self.conv_layer3 = nn.Conv3d(in_channels=conv_input2, out_channels=conv_input2, kernel_size=(1, 1, 1), stride=stride) # no padding
 
@@ -67,9 +74,6 @@ class CDB_Basic(CDB_struc):
     ## ActFunction(Previous Block) > [CONV - BN - (cat, max) - ActFunction]*2 - [CONV - BN] > OUTPUT
     def forward(self, x):
         dim = self.dim + 2
-
-        # ActFunction(Previous Block)
-        # x0 = self.relu(x)
         
         # [CONV - BN - (cat, max) - ActFunction]*2
         x1 = self.conv_layer1(x)
@@ -112,26 +116,6 @@ class CDB_Input(CDB_struc):
     def forward(self, x):        
         dim = self.dim + 2 # dimension 4(2d), 5(3d)
 
-        # # INPUT - BN
-        # x0_bn = self.bn0(x)
-
-        # # CONV - BN - ActFunction
-        # x0 = self.conv_layer1(x0_bn) ### 1
-        # x1_bn = self.bn1(x0)
-        # x1 = self.relu(x1_bn)
-
-        # x1 = self.conv_layer2(x1)
-        # x2_bn = self.bn2(x1)
-
-        # x2 = torch.cat((torch.unsqueeze(x2_bn, dim), torch.unsqueeze(x1_bn, dim)), dim=dim)
-        # x2_max, _ = torch.max(x2, dim)
-        # x2 = self.relu(x2_max)
-
-        # x3 = self.conv_layer3(x2)
-        # x_out = self.bn3(x3)
-
-        # out_enc, indices = self.maxpool(x_out)           # Max Pooling layer
-        
         x0 = self.conv_layer1(x)
 
         x1_bn = self.bn1(x0)
@@ -187,6 +171,7 @@ class CDB_Dec(CDB_Basic):
 
         unpool = torch.unsqueeze(self.unpool(x, indices), dim) # unpooling layer
         x_out = torch.unsqueeze(x_out, dim) # output of the block(Enc)
+
         concatenated_max, _ = torch.max(torch.cat((unpool, x_out), dim=dim), dim)
 
         out_dec = super(CDB_Dec, self).forward(concatenated_max) # CDB Basic Block(Inherited from CDB_basic)
@@ -240,31 +225,6 @@ class CDB_BottleNeck(nn.Module):
     def forward(self, x):
         dim = self.dim + 2 # dimension 4(2d), 5(3d)
 
-        # # Activation from pooled input
-        # x0 = self.relu(x)
-
-        # # Convolution block 1
-        # x0 = self.conv_layer1(x0)
-        # x1_bn = self.bn0(x0)
-        # x0_bn = torch.unsqueeze(x, dim)
-        # x1_bn = torch.unsqueeze(x1_bn, dim)
-        # x1 = torch.cat((x1_bn, x0_bn), dim=dim)  # Concatenate along the 5th dimension NB x C x H x W x F
-        # x1_max, _ = torch.max(x1, dim)
-        # x1 = self.relu(x1_max)
-
-        # # Convolution block 2
-        # x1 = self.conv_layer2(x1)
-        # x2_bn = self.bn1(x1)
-        # x2_bn = torch.unsqueeze(x2_bn, dim)
-        # x1_max = torch.unsqueeze(x1_max, dim)
-        # x2 = torch.cat((x2_bn, x1_max), dim=dim)  # Concatenating along the 5th dimension
-        # x2_max, _ = torch.max(x2, dim)
-        # x2 = self.relu(x2_max)
-
-        # # Convolution block 3
-        # out = self.conv_layer3(x2)
-        # out = self.bn2(out)
-
         # Convolution block 1
         x0 = self.conv_layer1(x)
         x1_bn = self.bn0(x0)
@@ -304,33 +264,34 @@ class CDB_Output(nn.Module):
 
 
     def forward(self, x):
-        logits = self.conv_layer(x)
+        x_out = self.conv_layer(x)
 
-        return logits
-
+        return x_out
 
 
 class fsCNN(nn.Module):
     def __init__(self, params):
         super(fsCNN, self).__init__()
+        
         self.dim = params['dimension']
+        self.vit_out = vit.ViT(params)
 
+        ### ENCODER
         self.input = CDB_Input(params)        
-        params['num_channels'] = params['num_filters']
-
+        params['num_channels'] = params['num_filters'] # encoder(input = 1 > enc=num_filters)
         self.enc1 = CDB_Enc(params)
         self.enc2 = CDB_Enc(params)
-        self.enc3 = CDB_Enc(params)
+        # self.enc3 = CDB_Enc(params)
+
         self.bottle_neck = CDB_BottleNeck(params)
         
-        self.dec1 = CDB_Dec(params)
-        self.dec2 = CDB_Dec(params)
+        ### DECODER
+        # self.dec4 = CDB_Dec(params)
         self.dec3 = CDB_Dec(params)
-        self.dec4 = CDB_Dec(params)
+        self.dec2 = CDB_Dec(params)
+        self.dec1 = CDB_Dec(params)
         
         self.output = CDB_Output(params)
-        
-        # self.vit_out = vit.ViT(params)
 
         ### Net Initialization
         for m in self.modules():
@@ -357,30 +318,21 @@ class fsCNN(nn.Module):
             logits = self.output.forward(out_dec1)
 
         else: # dim 3
-            # x0, x1, x2, x3 = self.vit_out(x)
-
-            skip_enc1, out_enc1, indice1 = self.input.forward(x)
+            x0, x1, x2 = self.vit_out(x) #, x3
+    
+            skip_enc1, out_enc1, indice1 = self.input.forward(x0) # x0(TF enc output), x(raw)
             skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1)
             skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2)
-            skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3) 
+            # skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3) 
 
-            bottle_neck = self.bottle_neck(out_enc4)
-            
-            out_dec4 = self.dec4.forward(bottle_neck, skip_enc4, indice4)
-            out_dec3 = self.dec3.forward(out_dec4, skip_enc3, indice3)
-            out_dec2 = self.dec2.forward(out_dec3, skip_enc2, indice2)
-            out_dec1 = self.dec1.forward(out_dec2, skip_enc1, indice1)
-            
+            # bottle_neck = self.bottle_neck(out_enc4)
+            bottle_neck = self.bottle_neck(out_enc3)
+                        
+            # out_dec4 = self.dec4.forward(bottle_neck, x3, indice4)
+            out_dec3 = self.dec3.forward(bottle_neck, x2, indice3)
+            out_dec2 = self.dec2.forward(out_dec3, x1, indice2)
+            out_dec1 = self.dec1.forward(out_dec2, x0, indice1)
+
             logits = self.output.forward(out_dec1)
 
-        ### simple debug
-        # print(x.shape)
-        # print('-----------------ENC-----------------')
-        # print(out_enc1.shape, out_enc2.shape)
-        # print(out_enc3.shape, out_enc4.shape)
-        
-        # print('-----------------DEC-----------------')
-        # print(out_dec4.shape, out_dec3.shape)
-        # print(out_dec2.shape, out_dec1.shape)
-        
         return logits

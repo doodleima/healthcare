@@ -9,6 +9,7 @@ from torchsummary import summary
 
 import numpy as np
 
+
 ### Patch & Positional Embedding
 class EMB(nn.Module):
     def __init__(self, params):
@@ -33,9 +34,6 @@ class EMB(nn.Module):
         x = self.conv_layer1(x)
         x = rearrange(x, 'b e (h) (w) (d) -> b (h w d) e')  # x = x.reshape(b, -1, self.emb_size).transpose(1, 2)
         
-        ### non classification layer - cls token X
-        # cls_token = repeat(self.cls_token, "() n e -> b n e", b=b)
-        # x = torch.cat([cls_token, x], dim=1)
         x += self.emb_pos
         x = self.dropout_layer1(x)  # added
         
@@ -51,9 +49,9 @@ class MSA(nn.Module):
         self.num_heads = int(params['num_heads'])
         self.dropout_rate = float(params['drop_rate'])
 
-        self.K = nn.Linear(self.emb_size, self.emb_size)
-        self.Q = nn.Linear(self.emb_size, self.emb_size)
-        self.V = nn.Linear(self.emb_size, self.emb_size)
+        self.K = nn.Linear(self.emb_size, self.emb_size)#, self.emb_size)
+        self.Q = nn.Linear(self.emb_size, self.emb_size)#, self.emb_size)
+        self.V = nn.Linear(self.emb_size, self.emb_size)#, self.emb_size)
  
         self.drop_layer1 = nn.Dropout(self.dropout_rate)
         self.proj_layer1 = nn.Linear(self.emb_size, self.emb_size)
@@ -103,21 +101,7 @@ class MLP(nn.Module):
         return x
 
 
-# ### Residual Block
-# class Residual(nn.Module):
-#     def __init__(self, fn):
-#         super().__init__()
-#         self.fn_layer = fn
-
-#     def forward(self, x, **kwargs):
-#         x_res = x
-#         x_out = self.fn_layer(x, **kwargs)
-#         x_out += x_res
-
-#         return x
-
-
-### Transformer Encoder Block
+### Transformer Encoder Block(Basic)
 class Enc_basic(nn.Module):
     def __init__(self, params):
         super(Enc_basic, self).__init__()
@@ -140,7 +124,7 @@ class Enc_basic(nn.Module):
         )
 
 
-    def forward(self, x):
+    def forward(self, x): ### if) multi-batch > n2 patch
         res = x
         x1 = self.residual_layer1(x)
         x1 += res
@@ -152,6 +136,7 @@ class Enc_basic(nn.Module):
         return x2
 
 
+### Transformer Encoder Block(Basic)
 class TF_enc(nn.Module):
     def __init__(self, params):
         super().__init__()
@@ -160,18 +145,22 @@ class TF_enc(nn.Module):
         self.emb_layer1 = EMB(params)
         self.blocks = nn.ModuleList([Enc_basic(params) for _ in range(num_layers)])
 
+
     def forward(self, x):
         x_out = []
         x = self.emb_layer1(x)
+
         for blocks in self.blocks: x_out.append(blocks(x))
 
         return x_out
 
 
+### ViT(Non-classification layer)
 class ViT(nn.Module):
     def __init__(self, params):
         super().__init__()
         
+        params['num_layers'] = params['num_layers'] if params['num_layers'] else 4
         self.patch_size = params['patch_size']
         
         self.patch = (self.patch_size*2, self.patch_size*2, self.patch_size*2) 
@@ -193,7 +182,7 @@ class ViT(nn.Module):
         self.deconv_layer1 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch, stride=self.patch)
         self.deconv_layer2 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch1, stride=self.patch1)
         self.deconv_layer3 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch2, stride=self.patch2)
-        self.deconv_layer4 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch3, stride=self.patch3)
+        # self.deconv_layer4 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch3, stride=self.patch3)
 
 
     def proj_feat(self, x):
@@ -206,36 +195,19 @@ class ViT(nn.Module):
 
     def forward(self, x): 
         x_out = self.tf_enc_layer1(x)
+        middle = int(len(x_out)/2)
 
+        ### each output enters into the skip-connection layer(concatenate with the previous decoder output) 
         x_out_raw = self.proj_feat(x_out[0])
-        x_out1 = self.proj_feat(x_out[1])
-        x_out2 = self.proj_feat(x_out[2])
-        x_out3 = self.proj_feat(x_out[3])
+        x_out1 = self.proj_feat(x_out[middle])
+        x_out2 = self.proj_feat(x_out[-1])
+        # x_out3 = self.proj_feat(x_out[3])
 
         ### deconvolution
+        ### b, num_filters, h, w, d ex) 1, 32, 128, 128, 128
         x_out_raw = self.deconv_layer1(x_out_raw).transpose(0, 1)
         x_out1 = self.deconv_layer2(x_out1).transpose(0, 1)
         x_out2 = self.deconv_layer3(x_out2).transpose(0, 1)
-        x_out3 = self.deconv_layer4(x_out3).transpose(0, 1)
+        # x_out3 = self.deconv_layer4(x_out3).transpose(0, 1)
 
-        return x_out_raw, x_out1, x_out2, x_out3
-
-
-if __name__ == '__main__':
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    h, w, d = 128, 128, 128
-    patch_size = 8
-    emb_size = 1024 # hidden size
-    mlp_dim = 2048 # mlp dim
-    num_heads = 32
-    drop_rate = 0.2
-    
-    img = torch.randn([1, 1, h, w, d])
-    params = {'num_channels':1, 'num_layers':4, 'mlp_dim':mlp_dim, 'img_hwd':h, 'emb_size':emb_size, 'patch_size':patch_size, 'num_heads':num_heads, 'drop_rate':drop_rate}
-    model = ViT(params=params)
-
-    summary(model, img)
-
-    x0, x1, x2, x3 = model(img.to(device))
-    for i in [x0, x1, x2, x3]: print(i.shape,'\n')
+        return x_out_raw, x_out1, x_out2#, x_out3
