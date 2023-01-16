@@ -45,8 +45,8 @@ class CDB_struc(nn.Module):
             pad_d = int((params['kernel_depth']-1) / 2)
             kernel_d = int(params['kernel_depth']) 
 
-            # self.conv_layer1 = nn.Conv3d(in_channels=conv_input, out_channels=conv_input2, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d)) # x(raw)
-            self.conv_layer1 = nn.Conv3d(in_channels=conv_input2, out_channels=conv_input2, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d)) # x(TF enc output)
+            self.conv_layer1 = nn.Conv3d(in_channels=conv_input, out_channels=conv_input2, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d)) # x(raw)
+            # self.conv_layer1 = nn.Conv3d(in_channels=conv_input2, out_channels=conv_input2, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d)) # x(TF enc output)
             self.conv_layer2 = nn.Conv3d(in_channels=conv_input2, out_channels=conv_input2, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d))
             self.conv_layer3 = nn.Conv3d(in_channels=conv_input2, out_channels=conv_input2, kernel_size=(1, 1, 1), stride=stride) # no padding
 
@@ -205,11 +205,11 @@ class CDB_BottleNeck(nn.Module):
             
             self.conv_layer1 = nn.Conv3d(in_channels=conv_input, out_channels=conv_input, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d))
             self.conv_layer2 = nn.Conv3d(in_channels=conv_input, out_channels=conv_input, kernel_size=(kernel_w, kernel_h, kernel_d), stride=stride, padding=(pad_w, pad_h, pad_d))
-            self.conv_layer3 = nn.Conv3d(in_channels=conv_input, out_channels=conv_input, kernel_size=(1, 1, 1), stride=stride) # no padding
+            # self.conv_layer3 = nn.Conv3d(in_channels=conv_input, out_channels=conv_input, kernel_size=(1, 1, 1), stride=stride) # no padding
             
             self.bn0 = nn.BatchNorm3d(num_features=conv_input)
             self.bn1 = nn.BatchNorm3d(num_features=conv_input)
-            self.bn2 = nn.BatchNorm3d(num_features=conv_input)
+            # self.bn2 = nn.BatchNorm3d(num_features=conv_input)
 
         else: # 2d
             self.conv_layer1 = nn.Conv2d(in_channels=conv_input, out_channels=conv_input, kernel_size=(kernel_w, kernel_h), stride=stride, padding=(pad_w, pad_h))
@@ -281,12 +281,12 @@ class fsCNN(nn.Module):
         params['num_channels'] = params['num_filters'] # encoder(input = 1 > enc=num_filters)
         self.enc1 = CDB_Enc(params)
         self.enc2 = CDB_Enc(params)
-        # self.enc3 = CDB_Enc(params)
+        self.enc3 = CDB_Enc(params)
 
         self.bottle_neck = CDB_BottleNeck(params)
         
         ### DECODER
-        # self.dec4 = CDB_Dec(params)
+        self.dec4 = CDB_Dec(params)
         self.dec3 = CDB_Dec(params)
         self.dec2 = CDB_Dec(params)
         self.dec1 = CDB_Dec(params)
@@ -318,20 +318,19 @@ class fsCNN(nn.Module):
             logits = self.output.forward(out_dec1)
 
         else: # dim 3
-            x0, x1, x2 = self.vit_out(x) #, x3
+            x1, x2, x3 = self.vit_out(x) #, x0
     
-            skip_enc1, out_enc1, indice1 = self.input.forward(x0) # x0(TF enc output), x(raw)
+            skip_enc1, out_enc1, indice1 = self.input.forward(x) # x0(TF enc output), x(raw)
             skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1)
             skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2)
-            # skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3) 
+            skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3) 
 
-            # bottle_neck = self.bottle_neck(out_enc4)
-            bottle_neck = self.bottle_neck(out_enc3)
+            bottle_neck = self.bottle_neck(out_enc4)
                         
-            # out_dec4 = self.dec4.forward(bottle_neck, x3, indice4)
-            out_dec3 = self.dec3.forward(bottle_neck, x2, indice3)
+            out_dec4 = self.dec4.forward(bottle_neck, x3, indice4)
+            out_dec3 = self.dec3.forward(out_dec4, x2, indice3)
             out_dec2 = self.dec2.forward(out_dec3, x1, indice2)
-            out_dec1 = self.dec1.forward(out_dec2, x0, indice1)
+            out_dec1 = self.dec1.forward(out_dec2, skip_enc1, indice1)
 
             logits = self.output.forward(out_dec1)
 

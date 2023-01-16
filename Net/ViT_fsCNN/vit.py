@@ -88,7 +88,7 @@ class MLP(nn.Module):
 
         self.linear_layer1 = nn.Linear(self.emb_size, self.expansion * self.emb_size)
         self.linear_layer2 = nn.Linear(self.expansion * self.emb_size, self.emb_size)
-        self.relu = nn.SiLU()
+        self.relu = nn.GELU()#.SiLU()
         self.dropout = nn.Dropout()
 
 
@@ -179,10 +179,10 @@ class ViT(nn.Module):
 
         self.tf_enc_layer1 = TF_enc(params)
 
-        self.deconv_layer1 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch, stride=self.patch)
+        # self.deconv_layer1 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch, stride=self.patch)
         self.deconv_layer2 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch1, stride=self.patch1)
         self.deconv_layer3 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch2, stride=self.patch2)
-        # self.deconv_layer4 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch3, stride=self.patch3)
+        self.deconv_layer4 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch3, stride=self.patch3)
 
 
     def proj_feat(self, x):
@@ -198,16 +198,16 @@ class ViT(nn.Module):
         middle = int(len(x_out)/2)
 
         ### each output enters into the skip-connection layer(concatenate with the previous decoder output) 
-        x_out_raw = self.proj_feat(x_out[0])
-        x_out1 = self.proj_feat(x_out[middle])
-        x_out2 = self.proj_feat(x_out[-1])
-        # x_out3 = self.proj_feat(x_out[3])
+        # x_out_raw = self.proj_feat(x_out[0])
+        x_out1 = self.proj_feat(x_out[0])
+        x_out2 = self.proj_feat(x_out[middle])
+        x_out3 = self.proj_feat(x_out[-1])
 
         ### deconvolution
         ### b, num_filters, h, w, d ex) 1, 32, 128, 128, 128
-        x_out_raw = self.deconv_layer1(x_out_raw).transpose(0, 1)
+        # x_out_raw = self.deconv_layer1(x_out_raw).transpose(0, 1)
         x_out1 = self.deconv_layer2(x_out1).transpose(0, 1)
         x_out2 = self.deconv_layer3(x_out2).transpose(0, 1)
-        # x_out3 = self.deconv_layer4(x_out3).transpose(0, 1)
+        x_out3 = self.deconv_layer4(x_out3).transpose(0, 1)
 
-        return x_out_raw, x_out1, x_out2#, x_out3
+        return x_out1, x_out2, x_out3 #x_out_raw, 
