@@ -1,16 +1,13 @@
-# healthcare
+# SourceCode Compliation: Medical AI
 
-SourceCode files which related to the medical AI area.
-
-# mri_preprocess
-
-  I. Dicom file converter : dicom to image (use DiCom ToolKit & pydicom - pydicom package only)
-     1) Restful API: performed to send & convert images inside the docker container
-  II. Data Preprocess(Total): Apply Threshold, CLAHE, Resample(Reshape)...
-
-
-# pytorch_train
-
-  I. Brain Segmentation using MONAI applied-Model : Brain MR Images with multi classes
-     1) monai: monai_based
-     2) torchio: apply torchio into DataLoader
+### Contest
++ Sample Code(Kaggle, DACON...)
+    * Kaggle: BrainTumor(MICCAI)
+### Net
++ Customized Network Code
+    * ViT_fsCNN(Docs): https://hollow-chiller-71c.notion.site/ViT-fastsurferCNN-2f56a1eeda8646dc96af6cc0600299ab
+### Util
++ Preprocessing / Etc
+    * prep: Pre & Postprocessing sample
+    * torchio: Pytorch dataLoader implemented by TorchIO
+        - Official Docs: https://torchio.readthedocs.io/index.html
