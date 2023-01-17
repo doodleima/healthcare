@@ -12,7 +12,7 @@ from glob import glob
 from tqdm import tqdm
 
 
-class torchCustomDataset():
+class torchCustomDataset:
     def __init__(self, base_path, num_cases, transform=None, test=False, shuffle=True, axis=0):
         self.FLAG = 0
         self.AXIS = axis
