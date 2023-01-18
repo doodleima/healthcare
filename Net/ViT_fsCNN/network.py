@@ -72,13 +72,14 @@ class CDB_Basic(CDB_struc):
         
         
     ## ActFunction(Previous Block) > [CONV - BN - (cat, max) - ActFunction]*2 - [CONV - BN] > OUTPUT
-    def forward(self, x):
+    def forward(self, x, vit_x=None):
         dim = self.dim + 2
         
         # [CONV - BN - (cat, max) - ActFunction]*2
         x1 = self.conv_layer1(x)
         x1_bn = torch.unsqueeze(self.bn0(x1), dim)
-        x0 = torch.unsqueeze(x, dim)
+        # x0 = torch.unsqueeze(x, dim) # raw
+        x0 = torch.unsqueeze(vit_x, dim) if vit_x != None else torch.unsqueeze(x, dim)
         
         x2 = torch.cat((x1_bn, x0), dim=dim)           # maxout
         x2_max, _ = torch.max(x2, dim)                 # maxout
@@ -113,7 +114,7 @@ class CDB_Input(CDB_struc):
         
         
     ## INPUT > BN > [CONV - BN - ActFunction] > [CONV - BN - (cat, max) - ActFunction] - [CONV - BN] > MAXPOOL > OUTPUT    
-    def forward(self, x):        
+    def forward(self, x, vit_x):        
         dim = self.dim + 2 # dimension 4(2d), 5(3d)
 
         x0 = self.conv_layer1(x)
@@ -122,7 +123,8 @@ class CDB_Input(CDB_struc):
         x1 = self.relu(x1_bn)
 
         x1 = self.conv_layer2(x1)
-        x2 = torch.cat((torch.unsqueeze(x1, dim), torch.unsqueeze(x0, dim)), dim=dim)
+        # x2 = torch.cat((torch.unsqueeze(x1, dim), torch.unsqueeze(x0, dim)), dim=dim)
+        x2 = torch.cat((torch.unsqueeze(x1, dim), torch.unsqueeze(vit_x, dim)), dim=dim)
         x_out, _ = torch.max(x2, dim)
 
         x_out = self.bn2(x_out)
@@ -145,8 +147,9 @@ class CDB_Enc(CDB_Basic):
 
 
     ## CDB Basic Block > ENC(Max Pooling Layer)
-    def forward(self, x):        
-        x_out = super(CDB_Enc, self).forward(x) # skip
+    def forward(self, x, vit_x):        
+        # x_out = super(CDB_Enc, self).forward(x) # skip
+        x_out = super(CDB_Enc, self).forward(x, vit_x) # skip
         out_enc, indices = self.maxpool(x_out)
         out_enc = self.relu(out_enc)
     
@@ -318,19 +321,19 @@ class fsCNN(nn.Module):
             logits = self.output.forward(out_dec1)
 
         else: # dim 3
-            x1, x2, x3 = self.vit_out(x) #, x0
+            x0, x1, x2, x3 = self.vit_out(x)
     
-            skip_enc1, out_enc1, indice1 = self.input.forward(x) # x0(TF enc output), x(raw)
-            skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1)
-            skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2)
-            skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3) 
+            skip_enc1, out_enc1, indice1 = self.input.forward(x, x0) # x0(TF enc output), x(raw)
+            skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1, x1)
+            skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2, x2)
+            skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3, x3) 
 
             bottle_neck = self.bottle_neck(out_enc4)
                         
             out_dec4 = self.dec4.forward(bottle_neck, x3, indice4)
             out_dec3 = self.dec3.forward(out_dec4, x2, indice3)
             out_dec2 = self.dec2.forward(out_dec3, x1, indice2)
-            out_dec1 = self.dec1.forward(out_dec2, skip_enc1, indice1)
+            out_dec1 = self.dec1.forward(out_dec2, x0, indice1)
 
             logits = self.output.forward(out_dec1)
 

@@ -88,7 +88,7 @@ class MLP(nn.Module):
 
         self.linear_layer1 = nn.Linear(self.emb_size, self.expansion * self.emb_size)
         self.linear_layer2 = nn.Linear(self.expansion * self.emb_size, self.emb_size)
-        self.relu = nn.GELU()#.SiLU()
+        self.relu = nn.GELU()
         self.dropout = nn.Dropout()
 
 
@@ -163,7 +163,7 @@ class ViT(nn.Module):
         params['num_layers'] = params['num_layers'] if params['num_layers'] else 4
         self.patch_size = params['patch_size']
         
-        self.patch = (self.patch_size*2, self.patch_size*2, self.patch_size*2) 
+        self.patch = self.patch_size*2
         self.patch1 = self.patch_size
         self.patch2 = int(self.patch_size/2) 
         self.patch3 = int(self.patch_size/4) 
@@ -172,18 +172,20 @@ class ViT(nn.Module):
         self.emb_size = params['emb_size']
         self.proj_axis = (0, 3 + 1) + tuple(d + 1 for d in range(3)) # 3D
         
-        self.feat_size = tuple(img_d // p_d for img_d, p_d in zip(self.img_size, self.patch))
+        self.feat_size = tuple(img_d // p_d for img_d, p_d in zip(self.img_size, (self.patch, self.patch, self.patch)))
         self.proj_reshape = list(self.feat_size) + [self.emb_size]
         
         self.input_c = int(params['num_channels']) # N2C
 
         self.tf_enc_layer1 = TF_enc(params)
 
-        # self.deconv_layer1 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch, stride=self.patch)
+        self.deconv_layer1 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch, stride=self.patch)
         self.deconv_layer2 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch1, stride=self.patch1)
         self.deconv_layer3 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch2, stride=self.patch2)
         self.deconv_layer4 = nn.ConvTranspose3d(in_channels=self.emb_size, out_channels=self.input_c, kernel_size=self.patch3, stride=self.patch3)
 
+        ### use another 3d reshape method instead of ConvTranspose3d
+        
 
     def proj_feat(self, x):
         new_shape = [x.size()[0]] + self.proj_reshape
@@ -195,19 +197,19 @@ class ViT(nn.Module):
 
     def forward(self, x): 
         x_out = self.tf_enc_layer1(x)
-        middle = int(len(x_out)/2)
+        middle = int(len(x_out)/4)
 
         ### each output enters into the skip-connection layer(concatenate with the previous decoder output) 
-        # x_out_raw = self.proj_feat(x_out[0])
-        x_out1 = self.proj_feat(x_out[0])
-        x_out2 = self.proj_feat(x_out[middle])
+        x_out_raw = self.proj_feat(x_out[0])
+        x_out1 = self.proj_feat(x_out[int(middle*2)])
+        x_out2 = self.proj_feat(x_out[int(middle*3)])
         x_out3 = self.proj_feat(x_out[-1])
 
         ### deconvolution
         ### b, num_filters, h, w, d ex) 1, 32, 128, 128, 128
-        # x_out_raw = self.deconv_layer1(x_out_raw).transpose(0, 1)
+        x_out_raw = self.deconv_layer1(x_out_raw).transpose(0, 1)
         x_out1 = self.deconv_layer2(x_out1).transpose(0, 1)
         x_out2 = self.deconv_layer3(x_out2).transpose(0, 1)
         x_out3 = self.deconv_layer4(x_out3).transpose(0, 1)
 
-        return x_out1, x_out2, x_out3 #x_out_raw, 
+        return x_out_raw, x_out1, x_out2, x_out3 
