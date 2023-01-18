@@ -276,7 +276,7 @@ class fsCNN(nn.Module):
     def __init__(self, params):
         super(fsCNN, self).__init__()
         
-        self.dim = params['dimension']
+        # self.dim = params['dimension']
         self.vit_out = vit.ViT(params)
 
         ### ENCODER
@@ -305,36 +305,50 @@ class fsCNN(nn.Module):
        
         
     def forward(self, x):
-        if self.dim == 2:
-            skip_enc1, out_enc1, indice1 = self.input.forward(x)
-            skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1)
-            skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2)
-            skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3)
-            
-            bottle_neck = self.bottle_neck(out_enc4)
-            
-            out_dec4 = self.dec4.forward(bottle_neck, skip_enc4, indice4)
-            out_dec3 = self.dec3.forward(out_dec4, skip_enc3, indice3)
-            out_dec2 = self.dec2.forward(out_dec3, skip_enc2, indice2)
-            out_dec1 = self.dec1.forward(out_dec2, skip_enc1, indice1)
-            
-            logits = self.output.forward(out_dec1)
+        x0, x1, x2, x3 = self.vit_out(x)
 
-        else: # dim 3
-            x0, x1, x2, x3 = self.vit_out(x)
-    
-            skip_enc1, out_enc1, indice1 = self.input.forward(x, x0) # x0(TF enc output), x(raw)
-            skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1, x1)
-            skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2, x2)
-            skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3, x3) 
+        skip_enc1, out_enc1, indice1 = self.input.forward(x, x0) # x0(TF enc output), x(raw)
+        skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1, x1)
+        skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2, x2)
+        skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3, x3) 
 
-            bottle_neck = self.bottle_neck(out_enc4)
+        bottle_neck = self.bottle_neck(out_enc4)
+                    
+        out_dec4 = self.dec4.forward(bottle_neck, x3, indice4)
+        out_dec3 = self.dec3.forward(out_dec4, x2, indice3)
+        out_dec2 = self.dec2.forward(out_dec3, x1, indice2)
+        out_dec1 = self.dec1.forward(out_dec2, x0, indice1)
+
+        logits = self.output.forward(out_dec1)
+
+        # if self.dim == 2:
+        #     skip_enc1, out_enc1, indice1 = self.input.forward(x)
+        #     skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1)
+        #     skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2)
+        #     skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3)
+            
+        #     bottle_neck = self.bottle_neck(out_enc4)
+            
+        #     out_dec4 = self.dec4.forward(bottle_neck, skip_enc4, indice4)
+        #     out_dec3 = self.dec3.forward(out_dec4, skip_enc3, indice3)
+        #     out_dec2 = self.dec2.forward(out_dec3, skip_enc2, indice2)
+        #     out_dec1 = self.dec1.forward(out_dec2, skip_enc1, indice1)
+            
+        #     logits = self.output.forward(out_dec1)
+
+        # else: # dim 3    
+        #     skip_enc1, out_enc1, indice1 = self.input.forward(x, x0) # x0(TF enc output), x(raw)
+        #     skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1, x1)
+        #     skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2, x2)
+        #     skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3, x3) 
+
+        #     bottle_neck = self.bottle_neck(out_enc4)
                         
-            out_dec4 = self.dec4.forward(bottle_neck, x3, indice4)
-            out_dec3 = self.dec3.forward(out_dec4, x2, indice3)
-            out_dec2 = self.dec2.forward(out_dec3, x1, indice2)
-            out_dec1 = self.dec1.forward(out_dec2, x0, indice1)
+        #     out_dec4 = self.dec4.forward(bottle_neck, x3, indice4)
+        #     out_dec3 = self.dec3.forward(out_dec4, x2, indice3)
+        #     out_dec2 = self.dec2.forward(out_dec3, x1, indice2)
+        #     out_dec1 = self.dec1.forward(out_dec2, x0, indice1)
 
-            logits = self.output.forward(out_dec1)
+        #     logits = self.output.forward(out_dec1)
 
         return logits
