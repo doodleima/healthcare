@@ -114,7 +114,7 @@ class CDB_Input(CDB_struc):
         
         
     ## INPUT > BN > [CONV - BN - ActFunction] > [CONV - BN - (cat, max) - ActFunction] - [CONV - BN] > MAXPOOL > OUTPUT    
-    def forward(self, x, vit_x):        
+    def forward(self, x):#, vit_x):        
         dim = self.dim + 2 # dimension 4(2d), 5(3d)
 
         x0 = self.conv_layer1(x)
@@ -123,49 +123,56 @@ class CDB_Input(CDB_struc):
         x1 = self.relu(x1_bn)
 
         x1 = self.conv_layer2(x1)
-        # x2 = torch.cat((torch.unsqueeze(x1, dim), torch.unsqueeze(x0, dim)), dim=dim)
-        x2 = torch.cat((torch.unsqueeze(x1, dim), torch.unsqueeze(vit_x, dim)), dim=dim)
+        x2 = torch.cat((torch.unsqueeze(x1, dim), torch.unsqueeze(x0, dim)), dim=dim)
+        # x2 = torch.cat((torch.unsqueeze(x1, dim), torch.unsqueeze(vit_x, dim)), dim=dim) # vit output / x1 maxout
         x_out, _ = torch.max(x2, dim)
 
         x_out = self.bn2(x_out)
         out_enc, indices = self.maxpool(x_out)
         out_enc = self.relu(out_enc)
 
-        return x_out, out_enc, indices                   # indices to skip connection
+        return out_enc, indices                   # indices to skip connection
     
 
     
 ### CDB Basic Block + ENC(Max pooling Layer)
 class CDB_Enc(CDB_Basic):
-    def __init__(self, params):
+    def __init__(self, params, mul=False):
         super(CDB_Enc, self).__init__(params) # no params
         stride_pool = int(params['stride_p'])
-        kernel_size = int(params['kernel_p'])
-        
+        kernel_size = int(params['kernel_p']) 
+        # dropout_rate = float(params['drop_rate'])
+
         self.maxpool = nn.MaxPool3d(kernel_size=kernel_size, stride=stride_pool, return_indices=True) if self.dim ==3 else nn.MaxPool2d(kernel_size=kernel_size, stride=stride_pool, return_indices=True)
         self.relu = nn.PReLU() if params['act_function'] == 'prelu' else nn.Mish()
 
+        # self.dropout_layer = nn.Dropout(dropout_rate)
 
     ## CDB Basic Block > ENC(Max Pooling Layer)
-    def forward(self, x, vit_x):        
-        # x_out = super(CDB_Enc, self).forward(x) # skip
-        x_out = super(CDB_Enc, self).forward(x, vit_x) # skip
+    def forward(self, x):#, vit_x):        
+        x_out = super(CDB_Enc, self).forward(x) # skip
+        # x_out = super(CDB_Enc, self).forward(x, vit_x) # skip
         out_enc, indices = self.maxpool(x_out)
         out_enc = self.relu(out_enc)
-    
-        return x_out, out_enc, indices
+
+        # out_enc = self.dropout_layer(out_enc) # add dropout
+
+        return out_enc, indices
         
         
     
 ### DEC(Max Unpooling Layer) + CDB Basic Block
 class CDB_Dec(CDB_Basic):
-    def __init__(self, params):
+    def __init__(self, params, mul=False):
         super(CDB_Dec, self).__init__(params) # no params
         stride_pool = int(params['stride_p'])
         kernel_size = int(params['kernel_p'])
-        
+        # dropout_rate = float(params['drop_rate'])
+
         self.unpool = nn.MaxUnpool3d(kernel_size=kernel_size, stride=stride_pool) if self.dim ==3 else nn.MaxUnpool2d(kernel_size=kernel_size, stride=stride_pool)
         self.relu = nn.PReLU() if params['act_function'] == 'prelu' else nn.Mish()
+
+        # self.dropout_layer = nn.Dropout(dropout_rate)
 
         
     ## INPUT > UNPOOL + SKIP CONNECTION > CDB Basic Block 
@@ -179,6 +186,8 @@ class CDB_Dec(CDB_Basic):
 
         out_dec = super(CDB_Dec, self).forward(concatenated_max) # CDB Basic Block(Inherited from CDB_basic)
         out_dec = self.relu(out_dec)
+
+        # out_dec = self.dropout_layer(out_dec) # add dropout
 
         return out_dec
         
@@ -198,6 +207,8 @@ class CDB_BottleNeck(nn.Module):
         
         conv_input = int(params['num_filters'])
         stride = int(params['stride_c'])
+
+        dropout_rate = float(params['drop_rate'])
         
         # change activation function if sliu == True
         self.relu = nn.PReLU() if params['act_function'] == 'prelu' else nn.Mish()
@@ -222,6 +233,8 @@ class CDB_BottleNeck(nn.Module):
             self.bn0 = nn.BatchNorm2d(num_features=conv_input)
             self.bn1 = nn.BatchNorm2d(num_features=conv_input)
             self.bn2 = nn.BatchNorm2d(num_features=conv_input)
+        
+        # self.dropout_layer1 = nn.Dropout(dropout_rate)
 
 
     ## [CONV - BN - ActFunction] > [CONV - BN - (cat, max) - ActFunction]*2 - [CONV - BN] > OUTPUT
@@ -246,6 +259,8 @@ class CDB_BottleNeck(nn.Module):
         x2_max, _ = torch.max(x2, dim)
         x_out = self.relu(x2_max)
         
+        # x_out = self.dropout_layer1(x_out) # add dropout
+
         return x_out
         
     
@@ -257,17 +272,20 @@ class CDB_Output(nn.Module):
         
         assert int(params['dimension']) != 2 or int(params['dimension']) != 3, 'Wrong Dimension value, please fill out 2 or 3'
         self.dim = int(params['dimension'])
-        
+        self.dropout_rate = float(params['drop_rate'])
+
         conv_input = int(params['num_channels'])
         num_classes = int(params['output_classes'])
         kernel_c = int(params['kernel_c'])
         stride = int(params['stride_c'])
 
         self.conv_layer = nn.Conv3d(conv_input, num_classes, kernel_c, stride) if self.dim == 3 else nn.Conv2d(conv_input, num_classes, kernel_c, stride)
+        self.dropout_layer = nn.Dropout(self.dropout_rate)
 
 
     def forward(self, x):
         x_out = self.conv_layer(x)
+        x_out = self.dropout_layer(x_out)
 
         return x_out
 
@@ -275,7 +293,7 @@ class CDB_Output(nn.Module):
 class fsCNN(nn.Module):
     def __init__(self, params):
         super(fsCNN, self).__init__()
-        
+
         # self.dim = params['dimension']
         self.vit_out = vit.ViT(params)
 
@@ -283,7 +301,7 @@ class fsCNN(nn.Module):
         self.input = CDB_Input(params)        
         params['num_channels'] = params['num_filters'] # encoder(input = 1 > enc=num_filters)
         self.enc1 = CDB_Enc(params)
-        self.enc2 = CDB_Enc(params)
+        self.enc2 = CDB_Enc(params, True)
         self.enc3 = CDB_Enc(params)
 
         self.bottle_neck = CDB_BottleNeck(params)
@@ -291,9 +309,9 @@ class fsCNN(nn.Module):
         ### DECODER
         self.dec4 = CDB_Dec(params)
         self.dec3 = CDB_Dec(params)
-        self.dec2 = CDB_Dec(params)
+        self.dec2 = CDB_Dec(params, True)
         self.dec1 = CDB_Dec(params)
-        
+
         self.output = CDB_Output(params)
 
         ### Net Initialization
@@ -306,11 +324,13 @@ class fsCNN(nn.Module):
         
     def forward(self, x):
         x0, x1, x2, x3 = self.vit_out(x)
+        
+        # for j in [x0, x1, x2, x3]: print(j.shape) # for checking vit output's shape
 
-        skip_enc1, out_enc1, indice1 = self.input.forward(x, x0) # x0(TF enc output), x(raw)
-        skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1, x1)
-        skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2, x2)
-        skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3, x3) 
+        out_enc1, indice1 = self.input.forward(x) # x0(TF enc output), x(raw)
+        out_enc2, indice2 = self.enc1.forward(out_enc1)
+        out_enc3, indice3 = self.enc2.forward(out_enc2)
+        out_enc4, indice4 = self.enc3.forward(out_enc3) 
 
         bottle_neck = self.bottle_neck(out_enc4)
                     
@@ -320,35 +340,5 @@ class fsCNN(nn.Module):
         out_dec1 = self.dec1.forward(out_dec2, x0, indice1)
 
         logits = self.output.forward(out_dec1)
-
-        # if self.dim == 2:
-        #     skip_enc1, out_enc1, indice1 = self.input.forward(x)
-        #     skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1)
-        #     skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2)
-        #     skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3)
-            
-        #     bottle_neck = self.bottle_neck(out_enc4)
-            
-        #     out_dec4 = self.dec4.forward(bottle_neck, skip_enc4, indice4)
-        #     out_dec3 = self.dec3.forward(out_dec4, skip_enc3, indice3)
-        #     out_dec2 = self.dec2.forward(out_dec3, skip_enc2, indice2)
-        #     out_dec1 = self.dec1.forward(out_dec2, skip_enc1, indice1)
-            
-        #     logits = self.output.forward(out_dec1)
-
-        # else: # dim 3    
-        #     skip_enc1, out_enc1, indice1 = self.input.forward(x, x0) # x0(TF enc output), x(raw)
-        #     skip_enc2, out_enc2, indice2 = self.enc1.forward(out_enc1, x1)
-        #     skip_enc3, out_enc3, indice3 = self.enc2.forward(out_enc2, x2)
-        #     skip_enc4, out_enc4, indice4 = self.enc3.forward(out_enc3, x3) 
-
-        #     bottle_neck = self.bottle_neck(out_enc4)
-                        
-        #     out_dec4 = self.dec4.forward(bottle_neck, x3, indice4)
-        #     out_dec3 = self.dec3.forward(out_dec4, x2, indice3)
-        #     out_dec2 = self.dec2.forward(out_dec3, x1, indice2)
-        #     out_dec1 = self.dec1.forward(out_dec2, x0, indice1)
-
-        #     logits = self.output.forward(out_dec1)
 
         return logits
