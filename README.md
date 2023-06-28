@@ -5,7 +5,8 @@
     * Kaggle: BrainTumor(MICCAI)
 ### Net
 + Customized Network Code
-    * ViT_fsCNN(Docs): https://hollow-chiller-71c.notion.site/ViT-fastsurferCNN-2f56a1eeda8646dc96af6cc0600299ab
+    * fsCNN(ViT): Apply ViT with Fastsurfer CNN structure
+    * VAE: 2D/3D Applicable
 ### Util
 + Preprocessing / Etc
     * prep: Pre & Postprocessing sample
